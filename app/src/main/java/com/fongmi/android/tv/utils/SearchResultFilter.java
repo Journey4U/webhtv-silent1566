@@ -204,7 +204,17 @@ public final class SearchResultFilter {
     }
 
     private static boolean hasHan(String value) {
-        return value.codePoints().anyMatch(codePoint -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN);
+        int index = 0;
+        while (index < value.length()) {
+            int codePoint = value.codePointAt(index);
+            Character.UnicodeBlock block = Character.UnicodeBlock.of(codePoint);
+            if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
+                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+                    || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) return true;
+            index += Character.charCount(codePoint);
+        }
+        return false;
     }
 
     private record Normalized(String tokens, String compact, String digits) {

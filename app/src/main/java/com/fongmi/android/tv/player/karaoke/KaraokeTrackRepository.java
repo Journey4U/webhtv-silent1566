@@ -1,6 +1,5 @@
 package com.fongmi.android.tv.player.karaoke;
 
-import android.text.Html;
 import android.net.Uri;
 import android.text.TextUtils;
 import android.webkit.CookieManager;
@@ -12,6 +11,7 @@ import com.fongmi.android.tv.player.PlayerManager;
 import com.fongmi.android.tv.player.lyrics.LyricsLine;
 import com.fongmi.android.tv.setting.PlayerSetting;
 import com.fongmi.android.tv.utils.Task;
+import com.fongmi.android.tv.utils.TextCompat;
 import com.github.catvod.net.OkHttp;
 import com.github.catvod.utils.Path;
 import com.github.catvod.utils.Util;
@@ -681,7 +681,7 @@ public class KaraokeTrackRepository {
 
     static String html(String text) {
         if (TextUtils.isEmpty(text)) return "";
-        return Html.fromHtml(text, Html.FROM_HTML_MODE_LEGACY).toString().replace('\u00A0', ' ').replace('\u3000', ' ').trim();
+        return TextCompat.fromHtml(text).toString().replace('\u00A0', ' ').replace('\u3000', ' ').trim();
     }
 
     static String normalizeSearch(String value) {

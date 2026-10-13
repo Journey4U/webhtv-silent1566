@@ -99,6 +99,8 @@ android {
                 keyAlias localProps['keyAlias']
                 keyPassword releaseKeyPassword
                 storePassword localProps['storePassword']
+                enableV1Signing = true
+                enableV2Signing = true
             }
         }
     }
@@ -158,8 +160,44 @@ androidComponents {
     }
 }
 
+// Several checked-in AARs were built with manifest minSdk 24 even when their
+// current API floor is intended to be 23. Keep the binary AARs unchanged and
+// generate build-local copies with only that manifest value corrected.
+def registerCompatMinSdkAar(String name, String packageName) {
+    def source = file("libs/${name}.aar")
+    def output = file("${layout.buildDirectory.get()}/generated/compat-aar/${name}-min23.aar")
+    def taskName = "generate${name.replace('-', '')}MinSdk23Aar"
+
+    tasks.register(taskName) {
+        inputs.file source
+        outputs.file output
+
+        doLast {
+            def temporary = temporaryDir
+            temporary.mkdirs()
+
+            copy {
+                from zipTree(source)
+                into temporary
+            }
+
+            new File(temporary, 'AndroidManifest.xml').text =
+                "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\" package=\"${packageName}\"><uses-sdk android:minSdkVersion=\"23\" /></manifest>"
+
+            output.parentFile.mkdirs()
+            ant.zip(destfile: output, basedir: temporary)
+        }
+    }
+
+    tasks.named('preBuild').configure { dependsOn taskName }
+    dependencies.add('implementation', files(output))
+}
+
 dependencies {
-    implementation fileTree(dir: "libs", include: ["*.aar", "*.jar"])
+    registerCompatMinSdkAar('hook-release', 'com.fongmi.hook')
+    registerCompatMinSdkAar('thunder-release', 'com.ghost.thunder')
+    registerCompatMinSdkAar('tvbus-release', 'com.tvbus.engine')
+    implementation fileTree(dir: "libs", include: ["*.aar", "*.jar"], exclude: ["hook-release.aar", "thunder-release.aar", "tvbus-release.aar"])
     implementation project(':catvod')
     implementation project(':chaquo')
     implementation project(':nodejs')

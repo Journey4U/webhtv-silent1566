@@ -1,7 +1,7 @@
 [versions]
 agp = "9.2.1"
 python = "17.0.0"
-minSdk = "24"
+minSdk = "23"
 targetSdk = "28"
 compileSdk = "37"
 
@@ -20,7 +20,7 @@ splashscreen = "1.2.0"
 startup = "1.2.0"
 swiperefreshlayout = "1.2.0"
 viewpager2 = "1.1.0"
-webkit = "1.16.0"
+webkit = "1.14.0"
 work = "2.11.2"
 
 androidGifDrawable = "1.2.31"

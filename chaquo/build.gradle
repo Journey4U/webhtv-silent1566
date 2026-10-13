@@ -18,7 +18,9 @@ android {
     compileSdk libs.versions.compileSdk.get().toInteger()
 
     defaultConfig {
-        minSdk libs.versions.minSdk.get().toInteger()
+        // Chaquopy 17 is AGP 9-compatible but its supported runtime floor is API 24.
+        // Keep this library at 24 while the app package itself targets a lower minSdk.
+        minSdk 24
         targetSdk libs.versions.targetSdk.get().toInteger()
         python {
             version = "3.10"

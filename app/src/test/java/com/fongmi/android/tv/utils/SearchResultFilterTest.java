@@ -14,6 +14,15 @@ import static org.junit.Assert.assertTrue;
 public class SearchResultFilterTest {
 
     @Test
+    public void hasHanDoesNotUseApi24StringCodePoints() throws Exception {
+        String source = new String(java.nio.file.Files.readAllBytes(java.nio.file.Path.of(
+                "src", "main", "java", "com", "fongmi", "android", "tv", "utils", "SearchResultFilter.java")),
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertFalse(source.contains("value.codePoints()"));
+        assertFalse(source.contains("Character.UnicodeScript"));
+    }
+
+    @Test
     public void matchesExactAndContainedTitles() {
         assertTrue(SearchResultFilter.matches("庆余年", "庆余年", 80));
         assertTrue(SearchResultFilter.matches("庆余年", "庆余年2", 75));

@@ -1,5 +1,6 @@
 package com.fongmi.android.tv.api.loader;
 
+import android.os.Build;
 import android.text.TextUtils;
 
 import com.fongmi.android.tv.api.config.LiveConfig;
@@ -26,13 +27,15 @@ public class BaseLoader {
 
     private final JarLoader jarLoader;
     private final PyLoader pyLoader;
+    private final boolean pythonSupported;
     private final JsLoader jsLoader;
     private final java.util.concurrent.ConcurrentHashMap<String, Spider> catSpiders;
     private final LoaderClearQueue clearQueue;
 
     private BaseLoader() {
         jarLoader = new JarLoader();
-        pyLoader = new PyLoader();
+        pythonSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N;
+        pyLoader = pythonSupported ? new PyLoader() : null;
         jsLoader = new JsLoader();
         catSpiders = new java.util.concurrent.ConcurrentHashMap<>();
         clearQueue = new LoaderClearQueue(Task.loaderExecutor());
@@ -68,7 +71,7 @@ public class BaseLoader {
     private void clear(int id, String reason) {
         SpiderDebug.log("base-loader", "clear start id=%d reason=%s", id, reason);
         clear("jar", jarLoader::clear);
-        clear("py", pyLoader::clear);
+        clear("py", this::clearPy);
         clear("js", jsLoader::clear);
         clear("cat", catSpiders::clear);
         SpiderDebug.log("base-loader", "clear done id=%d reason=%s", id, reason);
@@ -107,7 +110,7 @@ public class BaseLoader {
     public Spider getSpider(String key, String api, String ext, String jar) {
         // 猫源站点 type 也是 3，但 api 指向本机 bundle 的 HTTP 路由，得走协议适配而非本地引擎
         if (CatSpider.matches(api)) return catSpiders.computeIfAbsent(key, k -> new CatSpider(api));
-        if (isPy(api)) return pyLoader.getSpider(key, api, ext);
+        if (isPy(api)) return getPySpider(key, api, ext);
         else if (isJs(api)) return jsLoader.getSpider(key, api, ext, jar);
         else if (isCsp(api)) return jarLoader.getSpider(key, api, ext, jar);
         else return new SpiderNull();
@@ -123,17 +126,40 @@ public class BaseLoader {
 
     public void setRecent(String key, String api, String jar) {
         if (isJs(api)) jsLoader.setRecent(key);
-        else if (isPy(api)) pyLoader.setRecent(key);
+        else if (isPy(api)) setRecentPy(key);
         else if (isCsp(api)) jarLoader.setRecent(Util.md5(jar));
     }
 
     public Object[] proxy(Map<String, String> params) throws Exception {
         if (params.containsKey("siteKey")) return getSpider(params.get("siteKey")).proxy(params);
         if ("js".equals(params.get("do"))) return jsLoader.proxy(params);
-        if ("py".equals(params.get("do"))) return pyLoader.proxy(params);
+        if ("py".equals(params.get("do"))) return proxyPy(params);
         return jarLoader.proxy(params);
     }
 
+    private void clearPy() {
+        if (pyLoader != null) pyLoader.clear();
+    }
+
+    private Spider getPySpider(String key, String api, String ext) {
+        if (pyLoader == null) {
+            SpiderDebug.log("base-loader", "Python unavailable on API %d: key=%s api=%s", Build.VERSION.SDK_INT, key, api);
+            return new SpiderNull();
+        }
+        return pyLoader.getSpider(key, api, ext);
+    }
+
+    private void setRecentPy(String key) {
+        if (pyLoader != null) pyLoader.setRecent(key);
+    }
+
+    private Object[] proxyPy(Map<String, String> params) throws Exception {
+        return pyLoader == null ? null : pyLoader.proxy(params);
+    }
+
+    private java.util.Set<String> activePyKeys() {
+        return pyLoader == null ? java.util.Set.of() : pyLoader.activeKeys();
+    }
     public void parseJar(String jar, boolean recent) {
         if (TextUtils.isEmpty(jar)) return;
         String key = Util.md5(jar);
@@ -149,7 +175,7 @@ public class BaseLoader {
         java.util.HashSet<String> keys = new java.util.HashSet<>();
         keys.addAll(jarLoader.activeKeys());
         keys.addAll(jsLoader.activeKeys());
-        keys.addAll(pyLoader.activeKeys());
+        keys.addAll(activePyKeys());
         return java.util.Set.copyOf(keys);
     }
 
