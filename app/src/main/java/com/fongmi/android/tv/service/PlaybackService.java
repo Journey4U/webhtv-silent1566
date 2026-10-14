@@ -4,6 +4,7 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Binder;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.text.TextUtils;
@@ -305,7 +306,8 @@ private AudioHistory.Record audioHistoryRecord;
     }
 
     private void removeForeground() {
-        stopForeground(STOP_FOREGROUND_REMOVE);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) stopForeground(true);
+        else stopForeground(STOP_FOREGROUND_REMOVE);
     }
 
     private void saveProgress() {
