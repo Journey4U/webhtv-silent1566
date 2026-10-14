@@ -90,7 +90,7 @@ public class HistoryPresenter extends Presenter {
         int progress = (int) Math.min(Integer.MAX_VALUE, Math.max(0, item.getPosition()));
         binding.progress.setVisibility(View.VISIBLE);
         binding.progress.setMax(duration > 0 ? duration : 1);
-        binding.progress.setProgress(duration > 0 ? Math.min(progress, duration) : 0, true);
+        binding.progress.setProgress(duration > 0 ? Math.min(progress, duration) : 0);
     }
 
     @Override
