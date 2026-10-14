@@ -1,5 +1,7 @@
 package com.fongmi.android.tv.ui.activity;
 
+import com.fongmi.android.tv.utils.PictureInPictureCompat;
+
 import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.app.Activity;
@@ -2110,7 +2112,7 @@ private final Task.Scope mPersonalRecommendationTasks = new Task.Scope(Task.reco
         mAnimator = new ValueAnimator();
         mAnimator.setInterpolator(new DecelerateInterpolator());
         mAnimator.addUpdateListener(animation -> {
-            if (isLand() || isFullscreen() || isInPictureInPictureMode() || mFusionChromeApplied) return;
+            if (isLand() || isFullscreen() || PictureInPictureCompat.isInPictureInPictureMode(this) || mFusionChromeApplied) return;
             mFrameParams.height = (int) animation.getAnimatedValue();
             mBinding.video.setLayoutParams(mFrameParams);
         });
@@ -2532,7 +2534,7 @@ private final Task.Scope mPersonalRecommendationTasks = new Task.Scope(Task.reco
     }
 
     private boolean shouldUseTmdbTabletWideLayout() {
-        return canUseTmdbTabletWideLayout() && !isFullscreen() && !isInPictureInPictureMode();
+        return canUseTmdbTabletWideLayout() && !isFullscreen() && !PictureInPictureCompat.isInPictureInPictureMode(this);
     }
 
     private boolean canUseTmdbTabletWideLayout() {
@@ -2544,7 +2546,7 @@ private final Task.Scope mPersonalRecommendationTasks = new Task.Scope(Task.reco
             restoreDefaultVideoLayout();
             return;
         }
-        if (isFullscreen() || isInPictureInPictureMode()) return;
+        if (isFullscreen() || PictureInPictureCompat.isInPictureInPictureMode(this)) return;
         int side = ResUtil.dp2px(TMDB_TABLET_PLAYER_SIDE_MARGIN_DP);
         int gutter = ResUtil.dp2px(TMDB_TABLET_PLAYER_GUTTER_DP);
         int minPlayerWidth = ResUtil.dp2px(TMDB_TABLET_PLAYER_MIN_WIDTH_DP);
@@ -2579,7 +2581,7 @@ private final Task.Scope mPersonalRecommendationTasks = new Task.Scope(Task.reco
         mFrameParams = params;
         mFrameHeight = params.height;
         mTmdbTabletLayoutApplied = false;
-        if (isFullscreen() || isInPictureInPictureMode()) return;
+        if (isFullscreen() || PictureInPictureCompat.isInPictureInPictureMode(this)) return;
         mBinding.video.setLayoutParams(params);
     }
 
@@ -5351,7 +5353,7 @@ private final Task.Scope mPersonalRecommendationTasks = new Task.Scope(Task.reco
     }
 
     private void showControlIfFullscreen() {
-        if (!isFullscreen() || isLock() || isInPictureInPictureMode()) return;
+        if (!isFullscreen() || isLock() || PictureInPictureCompat.isInPictureInPictureMode(this)) return;
         showControl();
     }
 
@@ -5515,7 +5517,7 @@ private final Task.Scope mPersonalRecommendationTasks = new Task.Scope(Task.reco
     }
 
     private void showControl() {
-        if (service() == null || isInPictureInPictureMode()) return;
+        if (service() == null || PictureInPictureCompat.isInPictureInPictureMode(this)) return;
         if (mAudioStageVisible && !isFullscreen()) {
             hideWidgetOverlay();
             hideControl();
@@ -6586,7 +6588,7 @@ private final Task.Scope mPersonalRecommendationTasks = new Task.Scope(Task.reco
     }
 
     private void applyAudioStageLayout(boolean visible) {
-        if (isFullscreen() || isInPictureInPictureMode()) return;
+        if (isFullscreen() || PictureInPictureCompat.isInPictureInPictureMode(this)) return;
         if (!visible) {
             if (mFrameHeight > 0) mFrameParams.height = mFrameHeight;
         } else if (isPort()) {
@@ -8110,7 +8112,7 @@ private void checkOrientation() {
     }
 
     private void updateVideoHeight() {
-        if (isLand() || isFullscreen() || isInPictureInPictureMode()) return;
+        if (isLand() || isFullscreen() || PictureInPictureCompat.isInPictureInPictureMode(this)) return;
         if (mFrameHeight <= 0 || mFrameParams.height == mFrameHeight) return;
         logVideoFrame("updateVideoHeight restore from=" + mFrameParams.height + " to=" + mFrameHeight);
         mFrameParams.height = mFrameHeight;
@@ -8157,7 +8159,7 @@ private void checkOrientation() {
             mDiscMenuPlayer = mpv;
             if (mpv != null) mpv.addDiscMenuStateListener(mDiscMenuStateListener);
         }
-        boolean visible = mpv != null && mpv.isDiscMenuActive() && !isLock() && !isInPictureInPictureMode()
+        boolean visible = mpv != null && mpv.isDiscMenuActive() && !isLock() && !PictureInPictureCompat.isInPictureInPictureMode(this)
                 && !mAudioStageVisible && !isVisible(mBinding.control.getRoot());
         mBinding.discTools.getRoot().setVisibility(visible ? View.VISIBLE : View.GONE);
         mBinding.discTools.fullscreen.setImageResource(isFullscreen()
@@ -8679,7 +8681,7 @@ private void checkOrientation() {
 
     private void updateFusionThemeButtonVisibility() {
         if (mFusionThemeButton == null) return;
-        boolean show = DetailThemeVisibility.showFusionThemeButton(isRuntimeFusionMode(), isFullscreen(), isInPictureInPictureMode());
+        boolean show = DetailThemeVisibility.showFusionThemeButton(isRuntimeFusionMode(), isFullscreen(), PictureInPictureCompat.isInPictureInPictureMode(this));
         mFusionThemeButton.setVisibility(show ? View.VISIBLE : View.GONE);
     }
 

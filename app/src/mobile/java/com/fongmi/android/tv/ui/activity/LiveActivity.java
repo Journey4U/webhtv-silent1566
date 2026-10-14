@@ -1,5 +1,7 @@
 package com.fongmi.android.tv.ui.activity;
 
+import com.fongmi.android.tv.utils.PictureInPictureCompat;
+
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
@@ -628,7 +630,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     }
 
     private void onPiP() {
-        if (pipEntryPending || isInPictureInPictureMode()) return;
+        if (pipEntryPending || PictureInPictureCompat.isInPictureInPictureMode(this)) return;
         if (!preparePiP("panel")) return;
         prepareLivePiPView();
         pipEntryPending = true;
@@ -652,14 +654,14 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
         pipEntryListener = null;
         if (!pipEntryPending) return;
         pipEntryPending = false;
-        if (isInPictureInPictureMode()) return;
+        if (PictureInPictureCompat.isInPictureInPictureMode(this)) return;
         if (isFinishing() || isDestroyed() || service() == null || !player().haveTrack(C.TRACK_TYPE_VIDEO)) {
             restoreAfterFailedLivePiP();
             return;
         }
         mPiP.update(this, mBinding.video);
         boolean entered = mPiP.enter(this, LIVE_PIP_WIDTH, LIVE_PIP_HEIGHT, LiveSetting.getScale(), true);
-        if (!entered && !isInPictureInPictureMode()) restoreAfterFailedLivePiP();
+        if (!entered && !PictureInPictureCompat.isInPictureInPictureMode(this)) restoreAfterFailedLivePiP();
     }
 
     private void restoreAfterFailedLivePiP() {
@@ -676,7 +678,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
         }
         if (!pipEntryPending) return;
         pipEntryPending = false;
-        if (restoreUi && !isInPictureInPictureMode()) restoreAfterFailedLivePiP();
+        if (restoreUi && !PictureInPictureCompat.isInPictureInPictureMode(this)) restoreAfterFailedLivePiP();
     }
 
     private void enterFullscreenLive() {
@@ -690,7 +692,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     }
 
     private void enterFullscreenLiveOnPad() {
-        if (!isPadLiveFullscreenMode() || isRotate() || isInPictureInPictureMode()) return;
+        if (!isPadLiveFullscreenMode() || isRotate() || PictureInPictureCompat.isInPictureInPictureMode(this)) return;
         requestOrientation("enter-fullscreen-pad", getFullscreenOrient());
         if (!ResUtil.isLand(this)) return;
         enterFullscreenLive();
@@ -734,7 +736,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     }
 
     private void applyPadLiveMode() {
-        if (!ResUtil.isPad() || isInPictureInPictureMode()) return;
+        if (!ResUtil.isPad() || PictureInPictureCompat.isInPictureInPictureMode(this)) return;
         if (PlayerSetting.isPadLiveFullscreen()) {
             enterFullscreenLiveOnPad();
         } else if (!isRotate()) {
@@ -930,7 +932,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     }
 
     private boolean isEmbeddedLiveUi() {
-        return !ResUtil.isLand(this) && !isRotate() && !isInPictureInPictureMode();
+        return !ResUtil.isLand(this) && !isRotate() && !PictureInPictureCompat.isInPictureInPictureMode(this);
     }
 
     private void keepLiveMenuVisible() {
@@ -963,7 +965,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     }
 
     private void showControl() {
-        if (service() == null || isInPictureInPictureMode()) return;
+        if (service() == null || PictureInPictureCompat.isInPictureInPictureMode(this)) return;
         setPlayParamsState();
         boolean embedded = isEmbeddedLiveUi();
         if (!embedded && isVisible(mBinding.recycler)) hideUI(false);
@@ -1005,8 +1007,8 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     }
 
     private void showInfo() {
-        mBinding.widget.infoPip.setVisibility(isInPictureInPictureMode() ? View.VISIBLE : View.GONE);
-        mBinding.widget.info.setVisibility(isInPictureInPictureMode() ? View.GONE : View.VISIBLE);
+        mBinding.widget.infoPip.setVisibility(PictureInPictureCompat.isInPictureInPictureMode(this) ? View.VISIBLE : View.GONE);
+        mBinding.widget.info.setVisibility(PictureInPictureCompat.isInPictureInPictureMode(this) ? View.GONE : View.VISIBLE);
         setR3Callback();
         hideControl();
         setInfo();
@@ -2045,7 +2047,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
 
     private void switchToAudioBackground() {
         boolean audioOnly = isAudioOnly();
-        mKeepPlaybackAfterPipExit = isInPictureInPictureMode();
+        mKeepPlaybackAfterPipExit = PictureInPictureCompat.isInPictureInPictureMode(this);
         setAudioOnly(true);
         syncPiPForPlaybackMode();
         if (!moveTaskToBack(true)) {

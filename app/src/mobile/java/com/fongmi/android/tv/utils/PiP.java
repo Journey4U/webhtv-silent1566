@@ -1,5 +1,7 @@
 package com.fongmi.android.tv.utils;
 
+import com.fongmi.android.tv.utils.PictureInPictureCompat;
+
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
@@ -112,7 +114,7 @@ public class PiP {
 
     public boolean enter(Activity activity, int width, int height, int scale, boolean force) {
         try {
-            if (noPiP() || activity.isInPictureInPictureMode() || (!force && !shouldUsePictureInPicture())) return false;
+            if (noPiP() || PictureInPictureCompat.isInPictureInPictureMode(activity) || (!force && !shouldUsePictureInPicture())) return false;
             setAspectRatio(activity, width, height, scale);
             setAutoEnter();
             return activity.enterPictureInPictureMode(builder.build());

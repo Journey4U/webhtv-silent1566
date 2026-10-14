@@ -1,5 +1,7 @@
 package com.fongmi.android.tv.ui.activity;
 
+import com.fongmi.android.tv.utils.PictureInPictureCompat;
+
 import android.app.Activity;
 import android.app.Dialog;
 import android.content.ComponentName;
@@ -1919,7 +1921,7 @@ public class TmdbDetailActivity extends PlaybackActivity implements TrackDialog.
     }
 
     private boolean canEnterInlineFullscreenOnConfirm() {
-        return !inlineFullscreen && !inlinePiPLayout && !isInPictureInPictureMode();
+        return !inlineFullscreen && !inlinePiPLayout && !PictureInPictureCompat.isInPictureInPictureMode(this);
     }
 
     private void cycleThemeMode() {
@@ -2039,7 +2041,7 @@ public class TmdbDetailActivity extends PlaybackActivity implements TrackDialog.
     private void updateDetailThemeButtonVisibility() {
         if (binding == null) return;
         boolean mobile = Util.isMobile();
-        boolean pictureInPicture = isInPictureInPictureMode();
+        boolean pictureInPicture = PictureInPictureCompat.isInPictureInPictureMode(this);
         boolean showMobileButton = DetailThemeVisibility.showMobileThemeButton(mobile, inlineFullscreen, inlinePiPLayout, pictureInPicture);
         boolean showLargeScreenButton = DetailThemeVisibility.showLargeScreenThemeButton(mobile, inlineFullscreen, inlinePiPLayout, pictureInPicture);
         boolean fusionMode = modeController.isFusionMode();
@@ -10116,7 +10118,7 @@ public class TmdbDetailActivity extends PlaybackActivity implements TrackDialog.
     }
 
     private void enterInlineFullscreen() {
-        if (inlineFullscreen || inlinePiPLayout || isInPictureInPictureMode()) return;
+        if (inlineFullscreen || inlinePiPLayout || PictureInPictureCompat.isInPictureInPictureMode(this)) return;
         inlineFullscreen = true;
         updateDetailThemeButtonVisibility();
         requestedOrientation = getRequestedOrientation();
@@ -10152,7 +10154,7 @@ public class TmdbDetailActivity extends PlaybackActivity implements TrackDialog.
             resetInlineShortDramaMode();
             return;
         }
-        if (inlinePiPLayout || isInPictureInPictureMode()) return;
+        if (inlinePiPLayout || PictureInPictureCompat.isInPictureInPictureMode(this)) return;
         if (!inlineFullscreen) enterInlineFullscreen();
         if (!shouldUseInlineShortDramaMode()) {
             resetInlineShortDramaMode();

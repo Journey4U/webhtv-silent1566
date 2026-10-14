@@ -1,5 +1,7 @@
 package com.fongmi.android.tv.ui.activity;
 
+import com.fongmi.android.tv.utils.PictureInPictureCompat;
+
 import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Intent;
@@ -656,7 +658,7 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
     }
 
     private void closePiP() {
-        if (!isInPictureInPictureMode()) return;
+        if (!PictureInPictureCompat.isInPictureInPictureMode(this)) return;
         detach();
         finish();
     }
