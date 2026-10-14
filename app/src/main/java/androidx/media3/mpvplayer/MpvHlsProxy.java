@@ -34,11 +34,14 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.FilterInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
 import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -90,6 +93,7 @@ public final class MpvHlsProxy extends NanoHTTPD {
     private static final long SESSION_TTL_MS = TimeUnit.MINUTES.toMillis(3);
     private static final long MIN_CACHE_FILE_BYTES = 1;
     private static final int MAX_PENDING_PRELOAD_SEGMENTS = 256;
+    static final int MAX_PLAYLIST_BYTES = 8 * 1024 * 1024;
     private static final Pattern DASH_BASE_URL = Pattern.compile("(<BaseURL\\b[^>]*>)(.*?)(</BaseURL>)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
     private static final Pattern CONTENT_RANGE = Pattern.compile("bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)", Pattern.CASE_INSENSITIVE);
 
@@ -556,6 +560,33 @@ public final class MpvHlsProxy extends NanoHTTPD {
         return "http://127.0.0.1:" + getListeningPort();
     }
 
+    static String readPlaylistBody(ResponseBody body) throws IOException {
+        long contentLength = body.contentLength();
+        if (contentLength > MAX_PLAYLIST_BYTES) throw new IOException("HLS playlist is too large");
+        try (InputStream input = body.byteStream();
+             ByteArrayOutputStream output = new ByteArrayOutputStream(contentLength > 0
+                     ? (int) Math.min(contentLength, MAX_PLAYLIST_BYTES)
+                     : 8192)) {
+            byte[] buffer = new byte[8192];
+            int total = 0;
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                total += count;
+                if (total > MAX_PLAYLIST_BYTES) throw new IOException("HLS playlist is too large");
+                output.write(buffer, 0, count);
+            }
+            try {
+                return StandardCharsets.UTF_8.newDecoder()
+                        .onMalformedInput(CodingErrorAction.REPORT)
+                        .onUnmappableCharacter(CodingErrorAction.REPORT)
+                        .decode(ByteBuffer.wrap(output.toByteArray()))
+                        .toString();
+            } catch (CharacterCodingException e) {
+                throw new IOException("HLS playlist is not valid UTF-8", e);
+            }
+        }
+    }
+
     private Response servePlaylist(IHTTPSession httpSession) throws IOException {
         int id = parseSessionId(httpSession);
         Session session = sessions.get(id);
@@ -570,7 +601,7 @@ public final class MpvHlsProxy extends NanoHTTPD {
             }
             ResponseBody body = response.body();
             if (body == null) return error(Status.INTERNAL_ERROR, "empty playlist body");
-            String text = body.string();
+            String text = readPlaylistBody(body);
             recordPlaylistResponse(id, response.code(), session.url, text);
             if (!looksLikePlaylist(text)) {
                 SpiderDebug.log(TAG, "invalid playlist session=%d code=%d bytes=%d url=%s", id, response.code(), text.length(), shortUrl(session.url));
@@ -764,7 +795,7 @@ public final class MpvHlsProxy extends NanoHTTPD {
                         SpiderDebug.log(TAG, "nested playlist error id=%s code=%d url=%s", id, response.code(), shortUrl(target.url));
                         return error(toStatus(response.code()), "nested playlist http " + response.code());
                     }
-                    String text = body.string();
+                    String text = readPlaylistBody(body);
                     recordPlaylistResponse(target.sessionId, response.code(), target.url, text);
                     if (!looksLikePlaylist(text)) {
                         SpiderDebug.log(TAG, "invalid nested playlist id=%s code=%d bytes=%d url=%s", id, response.code(), text.length(), shortUrl(target.url));
