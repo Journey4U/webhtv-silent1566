@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Debug builds merge the API 24 Chaquopy library while the APK keeps minSdk 23. -->
+    <uses-sdk tools:overrideLibrary="com.fongmi.chaquo" />
     <application>
         <activity android:name="com.fongmi.android.tv.player.exo.ass.AssPrototypeActivity"
             android:exported="true" android:screenOrientation="landscape"
