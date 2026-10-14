@@ -1,5 +1,6 @@
 package com.fongmi.android.tv.ui.adapter;
 
+import android.os.Build;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -98,7 +99,9 @@ public class HistoryAdapter extends BaseDiffAdapter<History, HistoryAdapter.View
         int progress = (int) Math.min(Integer.MAX_VALUE, Math.max(0, item.getPosition()));
         binding.progress.setVisibility(View.VISIBLE);
         binding.progress.setMax(duration > 0 ? duration : 1);
-        binding.progress.setProgress(duration > 0 ? Math.min(progress, duration) : 0, true);
+        int value = duration > 0 ? Math.min(progress, duration) : 0;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) binding.progress.setProgress(value);
+        else binding.progress.setProgress(value, true);
     }
 
     public class ViewHolder extends RecyclerView.ViewHolder {
