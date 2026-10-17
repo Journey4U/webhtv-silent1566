@@ -652,16 +652,76 @@ APK 升级 → `lastUpdateTime` 变 → `refreshBundle = true` → 强制从 ass
 - 注册表：持久化往返、损坏数据不复活模块、降级被拒、契约变更触发重装、无效记录触发重装
 - 仓库：拒绝明文 HTTP、拒绝未知 schema、拒绝超大清单、拒绝空/畸形载荷、本地文件源
 
-### 16.4 后续阶段
+### 16.4 S0-c 已交付（2026-10-17）
+
+**范围**：P2 sherpa 模块门禁 + 控制器接入。
+
+新增（`app/src/main/java/com/fongmi/android/tv/runtime/`）：
+
+| 文件 | 职责 |
+| --- | --- |
+| `RuntimeSherpa.java` | 决定实时字幕引擎的原生库来源并指向模块目录 |
+
+修改：
+
+| 文件 | 改动 |
+| --- | --- |
+| `subtitle/RealtimeSubtitleController.java` | `prepareModel` 中在**模型下载之前**插入 `ensureNativeEngineAvailable()`，并输出一行 `realtime-subtitle` 诊断日志 |
+
+**SDK 机制（实测字节码确认，非推测）**：
+
+`com.k2fsa.sherpa.onnx.LibraryUtils.load()` 的调用顺序是
+
+```text
+loadFromSherpaOnnxNativePath()
+  name = mapLibraryName("sherpa-onnx-jni")          → libsherpa-onnx-jni.so
+  path = System.getProperty("sherpa_onnx.native.path")
+  if (dir.isDirectory() && new File(dir, name).exists())
+      System.load(absolutePath); return true        ← 命中
+  return false                                      ← 回退 System.loadLibrary
+```
+
+因此只要安装模块后把该属性指向模块目录即可重定向 SDK，**无需自行 `System.load`、无需修改 SDK**。
+
+**两个来自实测的硬约束**：
+
+1. **门禁必须在任何 `com.k2fsa.sherpa.onnx` 类被触碰之前执行**。`LibraryLoader` 的静态初始化块设置 `autoLoadEnabled = true` 并缓存加载结果，晚设置属性完全无效。`RuntimeSherpa` 刻意不引用 SDK，以免门禁自身触发被守护的加载。
+2. **`libsherpa-onnx-jni.so` 不依赖 `libc++_shared.so`**（`readelf -d` 实测：只依赖 `libandroid/liblog/libm/libdl/libc`）。所以 sherpa 模块的 `hostLibraries` 为空，不涉及 soname 冲突——这正是把它选为首个试点的依据。
+
+**降级设计**：模块未安装或校验失败时回退到 APK 内置库（过渡期仍打包 `libsherpa-onnx-jni.so`）；只有两者都不可用才报 `UNAVAILABLE` 并阻止启动。这样模块化不会把功能做成「装了才有」。
+
+**验证**：`--tests "com.fongmi.android.tv.runtime.*" --tests "com.fongmi.android.tv.subtitle.*"` → **178 tests, 0 failures, 0 skipped**（runtime 108 / subtitle 70）。`RuntimeSherpaTest` 14 项覆盖：指向已验证模块、模块优先于内置库、无模块回退、全不可用、校验失败降级、失败时报告原因、ABI 不符、loader 缺失、probe 缺失、configurer 缺失、属性名断言、库被删、未知契约。
+
+**真机验证状态（如实记录）**：
+
+| 项 | 状态 |
+| --- | --- |
+| Debug APK 构建 | ✅ 成功 |
+| 覆盖安装（签名一致，无需备份恢复流程） | ✅ 成功 |
+| 安装后无崩溃、进程存活 | ✅ 通过 |
+| `libsherpa-onnx-jni.so` 位于 `nativeLibraryDir` | ✅ 确认 |
+| **模块路径（`PackageInstaller` 安装、`native.path` 重定向）** | ⚠️ **无法验证** |
+| 内置库回退的实际运行 | ⚠️ 未触发 |
+
+**模块路径无法验证的原因**：目前尚不存在任何模块 APK（S0-d 未做），没有可安装对象；且 `VideoActivity` 未导出、本地 HTTP 服务未启用，无法用脚本触发实时字幕 UI。**这两项验证必须在 S0-d 产出 `runtime-sherpa` 模块后进行。**
+
+### 16.5 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
 | **S0-a** | 模块契约层 + 单测 | ✅ 已交付 |
 | **S0-b** | 仓库 / 安装器 / 加载器 / 平台适配 | ✅ 已交付 |
-| **S0-c** | P2 sherpa 接入（`sherpa_onnx.native.path`）+ 模块管理页 + 真机验证 | 待做 |
+| **S0-c** | P2 sherpa 门禁 + 控制器接入 | ✅ 已交付 |
 | **S0-d** | 新仓库 `Silent1566/webhtv-plugins` 骨架 + 打包脚本 + CI | 待做 |
+| **S0-e** | 模块管理页（设置 → 增强功能 挂载） | 待做 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
 >
-> **S0-c 前置**：`RuntimeAndroid` 的安装路径、`hostLibraries` 解析与 `sherpa_onnx.native.path` 生效性均需真机/模拟器验证（纯 JVM 单测覆盖不到）。
+> **S0-d 完成后必须补做的真机验证**（S0-c 遗留）：
+>
+> 1. `PackageInstaller` 会话安装模块 APK 的全流程（含用户确认界面）
+> 2. `sherpa_onnx.native.path` 是否真让 SDK 从模块目录加载（查 `realtime-subtitle` 日志的 `source=MODULE`）
+> 3. 模块卸载后回退内置库
+>
+> 模拟器：`F:/Workspace/webhtv` → `192.168.50.3:5555`（已确认 arm64 native bridge 可用、已装 arm64 包）。

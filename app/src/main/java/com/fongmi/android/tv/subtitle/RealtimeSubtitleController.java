@@ -19,9 +19,11 @@ import com.fongmi.android.tv.player.PlayerManager;
 import com.fongmi.android.tv.player.audio.PlaybackMediaAudioProcessor;
 import com.fongmi.android.tv.player.audio.PlaybackMediaClock;
 import com.fongmi.android.tv.player.audio.PlaybackMediaSignalHub;
+import com.fongmi.android.tv.runtime.RuntimeSherpa;
 import com.fongmi.android.tv.setting.Setting;
 import com.fongmi.android.tv.subtitle.RealtimeSubtitleModelCatalog.ModelFile;
 import com.fongmi.android.tv.subtitle.RealtimeSubtitleModelCatalog.ModelSpec;
+import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
 
 import java.io.File;
@@ -271,6 +273,10 @@ public final class RealtimeSubtitleController {
         RealtimeSubtitleTranslator previousTranslator = replacing ? translator : null;
         try {
             if (replacing) resetRecognizer(previousRecognizer, previousTranslator);
+            // Reject an unusable native engine before downloading a model the user cannot run.
+            // This also runs before any sherpa-onnx class is touched, which matters because the
+            // SDK loads its native library from a static initializer and caches the result.
+            ensureNativeEngineAvailable();
             ensureModel(spec, (percent, fileName) -> notifyState(request, State.PREPARING, String.valueOf(percent)), () -> request != generation);
             if (request != generation) return;
             validateMemory(spec);
@@ -635,6 +641,46 @@ public final class RealtimeSubtitleController {
         modelDownloadProgress = currentProgress;
         modelDownloadFile = currentFile;
         if (listener != null) main.post(() -> listener.onProgress(currentProgress, currentFile));
+    }
+
+    /**
+     * Ensures the sherpa-onnx native library is available before the SDK is touched.
+     *
+     * <p>Must run before any {@code com.k2fsa.sherpa.onnx} class is referenced: the SDK loads its
+     * native library from a static initializer and caches the result, so pointing it at a module
+     * afterwards would have no effect.
+     */
+    private void ensureNativeEngineAvailable() throws IOException {
+        RuntimeSherpa.Status status = RuntimeSherpa.prepare(
+                runtimeLoader(),
+                runtimeAbi(),
+                path -> System.setProperty(RuntimeSherpa.NATIVE_PATH_PROPERTY, path),
+                () -> bundledSherpaLibrary().isFile());
+        // Logged so a device run can confirm which source the engine resolved to.
+        SpiderDebug.log("realtime-subtitle", "native engine source=%s usable=%s path=%s problem=%s",
+                status.getSource(), status.isUsable(), status.getNativePath(), status.getProblem());
+        if (status.isUsable()) return;
+        throw new IOException(status.getProblem());
+    }
+
+    private static com.fongmi.android.tv.runtime.RuntimeLoader runtimeLoader() {
+        try {
+            return com.fongmi.android.tv.runtime.RuntimeAndroid.loader(
+                    com.fongmi.android.tv.runtime.RuntimeAndroid.store());
+        } catch (Throwable ignored) {
+            // The runtime registry is optional; without it the bundled library is used.
+            return null;
+        }
+    }
+
+    private static String runtimeAbi() {
+        return com.fongmi.android.tv.runtime.RuntimeAbi.resolve(
+                com.fongmi.android.tv.BuildConfig.FLAVOR_abi, android.os.Build.SUPPORTED_ABIS);
+    }
+
+    /** Location of the native library as shipped inside the APK, when it is still bundled. */
+    private static File bundledSherpaLibrary() {
+        return new File(App.get().getApplicationInfo().nativeLibraryDir, "libsherpa-onnx-jni.so");
     }
 
     private void validateMemory(ModelSpec spec) throws IOException {
