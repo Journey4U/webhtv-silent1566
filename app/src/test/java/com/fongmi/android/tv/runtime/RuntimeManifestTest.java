@@ -144,4 +144,33 @@ public class RuntimeManifestTest {
         assertTrue(manifest.isValid());
         assertTrue(manifest.hostLibraries().isEmpty());
     }
+
+    @Test
+    public void stripsTheLibAbiPrefixWhenResolvingAgainstNativeLibraryDir() {
+        // Device-verified layout: nativeLibraryDir ends at .../lib/arm64/ (a flat directory whose
+        // name is not even the manifest ABI spelling), while manifest paths are written relative to
+        // the APK root. Joining them verbatim would look for lib/arm64-v8a/lib/arm64-v8a/x.so.
+        assertEquals("libsherpa-onnx-jni.so",
+                RuntimeManifest.nativeLibraryEntry("lib/arm64-v8a/libsherpa-onnx-jni.so", "arm64-v8a"));
+        assertEquals("libsherpa-onnx-jni.so",
+                RuntimeManifest.nativeLibraryEntry("lib/armeabi-v7a/libsherpa-onnx-jni.so", "armeabi-v7a"));
+    }
+
+    @Test
+    public void acceptsBareFileNamesWhenResolvingAgainstNativeLibraryDir() {
+        assertEquals("libmpv.so", RuntimeManifest.nativeLibraryEntry("libmpv.so", "arm64-v8a"));
+    }
+
+    @Test
+    public void doesNotStripAPrefixForADifferentAbi() {
+        // A mismatch must not be silently "fixed" by stripping; the verifier rejects the ABI first.
+        assertEquals("lib/armeabi-v7a/libx.so",
+                RuntimeManifest.nativeLibraryEntry("lib/armeabi-v7a/libx.so", "arm64-v8a"));
+    }
+
+    @Test
+    public void handlesBlankPathsWhenResolving() {
+        assertEquals("", RuntimeManifest.nativeLibraryEntry("", "arm64-v8a"));
+        assertEquals("", RuntimeManifest.nativeLibraryEntry(null, "arm64-v8a"));
+    }
 }

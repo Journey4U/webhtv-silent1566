@@ -1,8 +1,5 @@
 package com.fongmi.android.tv.runtime;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonSyntaxException;
-
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -26,7 +23,6 @@ public final class RuntimeLoader {
         String read(String packageName) throws IOException;
     }
 
-    private static final Gson GSON = new Gson();
     private static final String MANIFEST_ASSET = "runtime.json";
 
     private final RuntimePlatform.PackageInfo packageInfo;
@@ -85,7 +81,7 @@ public final class RuntimeLoader {
                 RuntimeVerifier.verify(module, manifest, libDir, expectedAbi, hostLibraries);
         if (!result.isOk()) return Outcome.failure(result.describe());
 
-        File entryLibrary = new File(libDir, result.getEntryLibrary());
+        File entryLibrary = new File(libDir, RuntimeManifest.nativeLibraryEntry(result.getEntryLibrary(), manifest.abi));
         if (!entryLibrary.isFile()) {
             return Outcome.failure("模块入口库不存在：" + result.getEntryLibrary());
         }
@@ -116,11 +112,7 @@ public final class RuntimeLoader {
         if (manifestSource == null) return null;
         String raw = manifestSource.read(packageName);
         if (RuntimeText.isBlank(raw)) return null;
-        try {
-            return GSON.fromJson(raw, RuntimeManifest.class);
-        } catch (JsonSyntaxException e) {
-            throw new IOException("模块清单格式错误", e);
-        }
+        return RuntimeManifest.parse(raw);
     }
 
     /**

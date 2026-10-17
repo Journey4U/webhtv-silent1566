@@ -1,7 +1,10 @@
 package com.fongmi.android.tv.runtime;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
 import com.google.gson.annotations.SerializedName;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -13,6 +16,8 @@ import java.util.Map;
  * before loading anything, so a tampered or mismatched module fails closed.
  */
 public final class RuntimeManifest {
+
+    private static final Gson GSON = new Gson();
 
     @SerializedName("module")
     public String module;
@@ -77,6 +82,24 @@ public final class RuntimeManifest {
         return true;
     }
 
+    /**
+     * Parses a module manifest.
+     *
+     * <p>Shared by the loader and by device tests so both agree on what a valid manifest is.
+     *
+     * @throws IOException when the payload is blank or not valid JSON
+     */
+    public static RuntimeManifest parse(String json) throws IOException {
+        if (RuntimeText.isBlank(json)) throw new IOException("模块清单为空");
+        try {
+            RuntimeManifest manifest = GSON.fromJson(json, RuntimeManifest.class);
+            if (manifest == null) throw new IOException("模块清单无法解析");
+            return manifest;
+        } catch (JsonSyntaxException e) {
+            throw new IOException("模块清单格式错误", e);
+        }
+    }
+
     /** Finds the declared file entry for a manifest-relative path. */
     public RuntimeFile findFile(String path) {
         if (RuntimeText.isBlank(path)) return null;
@@ -84,6 +107,25 @@ public final class RuntimeManifest {
             if (file != null && path.equals(file.path)) return file;
         }
         return null;
+    }
+
+    /**
+     * Resolves a manifest path against an installed module's {@code nativeLibraryDir}.
+     *
+     * <p>Manifest paths are written relative to the APK root ({@code lib/<abi>/x.so}), while
+     * {@code ApplicationInfo.nativeLibraryDir} already points at {@code .../lib/<abi>/}. Joining
+     * them verbatim would look for {@code .../lib/<abi>/lib/<abi>/x.so} and always miss, so the
+     * redundant prefix is removed here.
+     *
+     * <p>Path traversal is rejected upstream by {@link RuntimeFile#isValid()}.
+     */
+    public static String nativeLibraryEntry(String declaredPath, String abi) {
+        if (RuntimeText.isBlank(declaredPath)) return "";
+        String normalized = declaredPath.trim();
+        String prefix = "lib/" + RuntimeAbi.normalize(abi) + "/";
+        if (normalized.startsWith(prefix)) return normalized.substring(prefix.length());
+        // Some producers write bare file names; accept those unchanged.
+        return normalized;
     }
 
     public static final class RuntimeFile {

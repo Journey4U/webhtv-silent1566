@@ -705,23 +705,77 @@ loadFromSherpaOnnxNativePath()
 
 **模块路径无法验证的原因**：目前尚不存在任何模块 APK（S0-d 未做），没有可安装对象；且 `VideoActivity` 未导出、本地 HTTP 服务未启用，无法用脚本触发实时字幕 UI。**这两项验证必须在 S0-d 产出 `runtime-sherpa` 模块后进行。**
 
-### 16.5 后续阶段
+### 16.5 S0-d 已交付（2026-10-17）
+
+**范围**：独立模块仓库 `webhtv-plugins` + 打包脚本 + CI；并补齐 S0-c 遗留的真机验证。
+
+**新仓库**：`F:/Workspace/webhtv-plugins`（已 `git init`，提交 `9c41fb7`；**尚未推送**）
+
+| 文件 | 职责 |
+| --- | --- |
+| `scripts/build_module.py` | 打包模块 APK（aapt2 link → 追加 Stored `.so` → zipalign → apksigner） |
+| `scripts/gen_catalog.py` | 由 `dist/` 重新生成 `catalog.json`，计算 sha256/size |
+| `catalog.json` | sherpa 1.0.0，覆盖 arm64-v8a 与 armeabi-v7a |
+| `.github/workflows/build-modules.yml` | 构建 + 摘要自校验 + 发布到 Release |
+| `README.md` | 模块契约（`catalog.json` / `runtime.json` / `hostLibraries`）与约束 |
+| `.gitignore` | 忽略 `dist/`（产物不入库，随 Release 分发） |
+
+**产物**：
+
+| ABI | 大小 | 说明 |
+| --- | --- | --- |
+| arm64-v8a | 23,630,316 B | 含 23,603,240 B 的 `libsherpa-onnx-jni.so`（Stored） |
+| armeabi-v7a | 16,134,638 B | 含 16,110,348 B 的 `libsherpa-onnx-jni.so`（Stored） |
+
+**打包过程中发现并修复的两个真实缺陷**（均为真机/构建实测暴露，非推测）：
+
+1. **`INSTALL_FAILED_INVALID_APK: code is missing`** —— 模块不含 dex，manifest 必须声明
+   `android:hasCode="false"`，否则平台拒绝安装。
+2. **`nativeLibraryDir` 路径拼接错误（宿主侧）** —— manifest 声明
+   `lib/arm64-v8a/libsherpa-onnx-jni.so`（相对 APK 根），而平台给的
+   `nativeLibraryDir` 已是扁平目录 `.../lib/arm64/`（**目录名甚至不是 ABI 的拼写**）。
+   直接拼接会去找 `.../lib/arm64/lib/arm64-v8a/x.so` 而必然失败。
+   修复：新增 `RuntimeManifest.nativeLibraryEntry(path, abi)` 剥离 `lib/<abi>/` 前缀，
+   由 `RuntimeVerifier.verifyFiles` 与 `RuntimeLoader` 共用。
+
+**验证**：
+
+| 项 | 结果 |
+| --- | --- |
+| 宿主单测 | `--tests "com.fongmi.android.tv.runtime.*"` → **112 tests, 0 failures**（新增 4 项路径前缀回归测试） |
+| 宿主既有字幕测试 | `--tests "com.fongmi.android.tv.subtitle.*"` → 70 tests, 0 failures，无回归 |
+| **真机仪器化测试** | `RuntimeModuleDeviceTest` → **OK (10 tests)**（设备 `192.168.50.3:5555`，定向 `am instrument`） |
+| catalog 一致性独立复核 | 两个 ABI 的 size/sha256 与产物一致；模块内 `files[0].sha256` 与真实 `.so` 一致；`Stored=True` |
+
+真机 10 项覆盖：`nativeLibraryDir` 可解析、库实际存在、`runtime.json` 可从已装 APK 读取、
+**对扁平目录校验成功**（即上述缺陷 2 的回归防线）、完整 loader 路径可加载、
+`sherpa` 门禁解析为 `Source.MODULE` 且路径为真实目录、属性名对 SDK 可见、
+版本不符被拒、ABI 不符被拒、缺失模块不抛异常。
+
+> 说明：`connectedAndroidTest` 会把测试跑到**所有**已连接设备并在目标设备上卸载宿主应用，
+> 因此真机验证改用 `adb shell am instrument -w -e class <FQCN>` 定向执行。此坑已记录。
+
+### 16.6 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
 | **S0-a** | 模块契约层 + 单测 | ✅ 已交付 |
 | **S0-b** | 仓库 / 安装器 / 加载器 / 平台适配 | ✅ 已交付 |
 | **S0-c** | P2 sherpa 门禁 + 控制器接入 | ✅ 已交付 |
-| **S0-d** | 新仓库 `Silent1566/webhtv-plugins` 骨架 + 打包脚本 + CI | 待做 |
+| **S0-d** | 新仓库 `webhtv-plugins` 骨架 + 打包脚本 + CI + 真机验证 | ✅ 已交付（**待推送**） |
 | **S0-e** | 模块管理页（设置 → 增强功能 挂载） | 待做 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
 >
-> **S0-d 完成后必须补做的真机验证**（S0-c 遗留）：
+> **S0-c 遗留验证的完成情况**：
 >
-> 1. `PackageInstaller` 会话安装模块 APK 的全流程（含用户确认界面）
-> 2. `sherpa_onnx.native.path` 是否真让 SDK 从模块目录加载（查 `realtime-subtitle` 日志的 `source=MODULE`）
-> 3. 模块卸载后回退内置库
+> 1. ✅ 模块安装到平台并落到 `nativeLibraryDir`（用 `adb install` 验证；`PackageInstaller` **会话**路径仍待 S0-e 的 UI 联调）
+> 2. ✅ 门禁解析为 `Source.MODULE` 且指向真实模块目录（仪器化测试）；**SDK 实际 dlopen 该路径**待 S0-e 播放联调
+> 3. ⬜ 模块卸载后回退内置库（待 S0-e）
 >
-> 模拟器：`F:/Workspace/webhtv` → `192.168.50.3:5555`（已确认 arm64 native bridge 可用、已装 arm64 包）。
+> **下一步（S0-e）必须完成**：模块管理页 + 播放页实时字幕端到端联调，并查
+> `realtime-subtitle` 日志确认 `source=MODULE` 与 SDK 实际加载路径。
+>
+> 模拟器：`F:/Workspace/webhtv` → `192.168.50.3:5555`（arm64 native bridge 可用）。
+> 真机测试请用 `am instrument` 定向执行，勿用 `connectedAndroidTest`（会波及所有设备并卸载宿主）。

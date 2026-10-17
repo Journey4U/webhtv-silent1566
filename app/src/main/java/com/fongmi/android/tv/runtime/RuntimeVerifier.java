@@ -131,7 +131,10 @@ public final class RuntimeVerifier {
 
     private static void verifyFiles(RuntimeManifest manifest, File moduleRoot, List<String> problems) {
         for (RuntimeManifest.RuntimeFile file : manifest.files()) {
-            File target = new File(moduleRoot, file.path);
+            // moduleRoot is the installed module's nativeLibraryDir, which already ends at
+            // lib/<abi>/, so the manifest's own lib/<abi>/ prefix must be stripped first.
+            String entry = RuntimeManifest.nativeLibraryEntry(file.path, manifest.abi);
+            File target = new File(moduleRoot, entry);
             if (!target.isFile()) {
                 problems.add("declared file is missing: " + file.path);
                 continue;

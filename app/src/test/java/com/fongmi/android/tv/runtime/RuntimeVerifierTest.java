@@ -81,11 +81,18 @@ public class RuntimeVerifierTest {
         return GSON.fromJson(manifestJson(), RuntimeManifest.class);
     }
 
-    /** Materializes the module directory exactly as the manifest declares it. */
+    /**
+     * Materializes the module directory the way the platform actually lays it out.
+     *
+     * <p>{@code nativeLibraryDir} is a flat directory (verified on device as
+     * {@code .../lib/arm64/}), while manifest paths are written relative to the APK root
+     * ({@code lib/arm64-v8a/x.so}). The verifier strips that prefix, so the files live at the
+     * directory root here.
+     */
     private File moduleRoot() throws IOException {
         File root = folder.newFolder("module");
-        write(new File(root, LIBMPV), LIBMPV_BYTES);
-        write(new File(root, LIBPLAYER), LIBPLAYER_BYTES);
+        write(new File(root, "libmpv.so"), LIBMPV_BYTES);
+        write(new File(root, "libplayer.so"), LIBPLAYER_BYTES);
         return root;
     }
 
@@ -118,7 +125,7 @@ public class RuntimeVerifierTest {
     public void rejectsTamperedModuleFile() throws IOException {
         File root = moduleRoot();
         // Flip one byte in a declared library.
-        write(new File(root, LIBMPV), "mpv-payloaX".getBytes(StandardCharsets.UTF_8));
+        write(new File(root, "libmpv.so"), "mpv-payloaX".getBytes(StandardCharsets.UTF_8));
 
         RuntimeVerifier.Result result = RuntimeVerifier.verify(
                 module(), manifest(), root, "arm64-v8a", host(hostLibcxx()));
@@ -130,7 +137,7 @@ public class RuntimeVerifierTest {
     @Test
     public void rejectsMissingModuleFile() throws IOException {
         File root = moduleRoot();
-        assertTrue(new File(root, LIBMPV).delete());
+        assertTrue(new File(root, "libmpv.so").delete());
 
         RuntimeVerifier.Result result = RuntimeVerifier.verify(
                 module(), manifest(), root, "arm64-v8a", host(hostLibcxx()));
@@ -142,7 +149,7 @@ public class RuntimeVerifierTest {
     @Test
     public void rejectsSizeMismatch() throws IOException {
         File root = moduleRoot();
-        write(new File(root, LIBMPV), "mpv-payload-plus".getBytes(StandardCharsets.UTF_8));
+        write(new File(root, "libmpv.so"), "mpv-payload-plus".getBytes(StandardCharsets.UTF_8));
 
         RuntimeVerifier.Result result = RuntimeVerifier.verify(
                 module(), manifest(), root, "arm64-v8a", host(hostLibcxx()));
@@ -262,8 +269,8 @@ public class RuntimeVerifierTest {
     @Test
     public void reportsEveryProblemAtOnce() throws IOException {
         File root = moduleRoot();
-        write(new File(root, LIBMPV), "wrong".getBytes(StandardCharsets.UTF_8));
-        assertTrue(new File(root, LIBPLAYER).delete());
+        write(new File(root, "libmpv.so"), "wrong".getBytes(StandardCharsets.UTF_8));
+        assertTrue(new File(root, "libplayer.so").delete());
 
         RuntimeVerifier.Result result = RuntimeVerifier.verify(
                 module(), manifest(), root, "arm64-v8a", name -> null);
