@@ -622,14 +622,46 @@ APK 升级 → `lastUpdateTime` 变 → `refreshBundle = true` → 强制从 ass
 
 **已覆盖的失败关闭场景**：篡改文件、缺失文件、尺寸不符、宿主库摘要不符、宿主库缺失、宿主库提供者不可用、**模块自带宿主库**（soname 冲突防线）、版本不符、契约不符、未知契约、ABI 不符、模块目录缺失、null 入参、多问题一次性汇总。
 
-### 16.3 后续阶段
+### 16.3 S0-b 已交付（2026-10-17）
+
+**范围**：模块仓库、安装编排、加载门禁、Android 适配层。
+
+新增（`app/src/main/java/com/fongmi/android/tv/runtime/`）：
+
+| 文件 | 职责 |
+| --- | --- |
+| `RuntimeStore.java` | 已装模块注册表 + 安装/更新/重装/降级决策 |
+| `RuntimePlatform.java` | 平台能力的窄接口（下载/安装/包信息/库加载） |
+| `RuntimeInstaller.java` | 下载 → **校验** → 安装 → 记录 的编排 |
+| `RuntimeLoader.java` | 校验 + 加载入口库（`System.load` 前的最后一道门） |
+| `RuntimeRepository.java` | 拉取/解析 `catalog.json`（HTTPS 强制、大小上限） |
+| `RuntimeAndroid.java` | 平台实现（`PackageInstaller` 会话、`nativeLibraryDir`、`Prefers` 存储） |
+
+**关键设计**：所有平台访问收敛为 `RuntimePlatform` 的四个窄接口，因此「下载→校验→安装→记录」与「校验→加载」两条安全关键路径均在纯 JVM 可测，无需 Robolectric 或真机。
+
+**为什么用 `PackageInstaller` 会话而非 `ACTION_VIEW`**：`ACTION_VIEW` 不会回传结果，宿主无法知道用户是否确认，可能把**从未安装**的模块记入注册表。会话 + 动态注册的接收器（无需 manifest 条目或导出组件）才能在首终态触发一次回调并据此写入注册表。
+
+**验证**：`bash ./gradlew :app:testMobileArm64_v8aDebugUnitTest --tests "com.fongmi.android.tv.runtime.*"` → **94 tests, 0 failures, 0 skipped**（新增 `RuntimeStoreTest` 13 / `RuntimeInstallerTest` 13 / `RuntimeLoaderTest` 15 / `RuntimeRepositoryTest` 15）。
+
+**变异验证**（证明安装前校验非恒真）：临时禁用 `RuntimeInstaller` 的产物摘要校验 → `verifiesDigestBeforeHandingTheApkToTheInstaller` 立即 FAILED；恢复后全绿。
+
+**已覆盖的失败关闭场景（新增）**：
+
+- 安装：摘要不符（且**安装器从未被调用**）、尺寸不符、下载失败、包名与清单不符、原生库目录缺失、未知契约（**下载前即拒绝**）、ABI 无产物、下载文件在成功/失败后均被清理、重复回调不覆盖已定结果
+- 加载：未安装、无清单、篡改库（等长载荷精确命中摘要路径）、尺寸不符、宿主库摘要错、入口库不在磁盘、加载抛错被转为失败结果、未知契约、库目录消失、`verify` 不触发加载
+- 注册表：持久化往返、损坏数据不复活模块、降级被拒、契约变更触发重装、无效记录触发重装
+- 仓库：拒绝明文 HTTP、拒绝未知 schema、拒绝超大清单、拒绝空/畸形载荷、本地文件源
+
+### 16.4 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
 | **S0-a** | 模块契约层 + 单测 | ✅ 已交付 |
-| **S0-b** | `RuntimeStore` / `RuntimeRepository` / `RuntimeInstaller`（`PackageInstaller`）/ `RuntimeLoader` | 待做 |
-| **S0-c** | P2 sherpa 接入（`sherpa_onnx.native.path`）+ 模块管理页 | 待做 |
-| **S0-d** | 新仓库 `webhtv-plugins` 骨架 + 打包脚本 + CI | 待做 |
+| **S0-b** | 仓库 / 安装器 / 加载器 / 平台适配 | ✅ 已交付 |
+| **S0-c** | P2 sherpa 接入（`sherpa_onnx.native.path`）+ 模块管理页 + 真机验证 | 待做 |
+| **S0-d** | 新仓库 `Silent1566/webhtv-plugins` 骨架 + 打包脚本 + CI | 待做 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
+>
+> **S0-c 前置**：`RuntimeAndroid` 的安装路径、`hostLibraries` 解析与 `sherpa_onnx.native.path` 生效性均需真机/模拟器验证（纯 JVM 单测覆盖不到）。
