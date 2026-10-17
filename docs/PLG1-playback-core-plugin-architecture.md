@@ -796,7 +796,56 @@ SDK 在静态初始化时加载并**按进程缓存**结果，因此本测试类
 | 模块卸载后回退内置库 | ⬜ 未验证（卸载模块后 `RuntimeSherpa` 应回退 `BUNDLED`，逻辑已由单测覆盖，但未做真机卸载回归） |
 | `PackageInstaller` 会话路径的 UI 联调 | ⬜ 未验证（用 `adb install` 验证了模块可安装落位，宿主内会话+确认流程未跑通） |
 
-### 16.7 后续阶段
+### 16.7 S0-f 已交付（2026-10-18）
+
+**范围**：模块管理页（挂载到 设置 → 增强功能）+ 卸载入口。
+
+新增：
+
+| 文件 | 职责 |
+| --- | --- |
+| `runtime/RuntimeModulePolicy.java` | 列表展示规则（可装/已装/可升级/ABI 不支持/契约不支持）+ 体积格式化 |
+| `ui/adapter/RuntimeModuleAdapter.java` | 模块列表适配器（每行：名称/说明/版本·体积/状态/安装/卸载） |
+| `ui/dialog/RuntimeModulesDialog.java` | 模块管理对话框（拉清单、安装、卸载、失败提示） |
+| `res/values/runtime_strings.xml` | 文案（含模块展示名的本地映射） |
+| `leanback/res/layout/{dialog_runtime_modules,adapter_runtime_module}.xml` | 电视端布局 |
+| `mobile/res/layout/{dialog_runtime_modules,adapter_runtime_module}.xml` | 手机端布局 |
+
+修改：
+
+| 文件 | 改动 |
+| --- | --- |
+| `AndroidManifest.xml` | 新增 `REQUEST_DELETE_PACKAGES`（卸载模块走系统确认界面） |
+| `leanback/.../SettingEnhanceActivity.java` + 布局 | 新增「播放模块」入口，并纳入 `reorderItems` 顺序 |
+| `mobile/.../SettingEnhanceFragment.java` + 布局 | 同上 |
+
+**设计决定**：
+
+1. **模块展示名用本地字符串映射，不用远程文本**。`catalog.json` 不含面向用户的文案，且宿主只认可白名单内的 `compatibilityId`；渲染远程文本既无必要，也扩大了不可信输入面。
+2. **卸载先忘记记录、再调系统卸载界面**。若用户在系统确认页取消，宿主已停止提供该能力——这是保守方向（宁可少一个能力，也不让注册表指向一个可能被卸载的包）。
+3. **已装但清单无匹配产物时仍显示该行**（`INSTALLED_NO_ARTIFACT`），否则用户无法卸载，会被卡住。
+
+**真机验证**（`192.168.50.3:5555`，覆盖安装）：
+
+| 项 | 结果 |
+| --- | --- |
+| Debug APK 构建 + 覆盖安装 | ✅ |
+| 应用启动无崩溃 | ✅ |
+| 设置 → 增强功能 出现「播放模块」入口（紧跟「实验室」） | ✅ |
+| 点击后对话框正常打开（标题/提示/空态/刷新按钮） | ✅ |
+| 刷新清单发起真实网络请求 | ✅ |
+| 拉取失败时显示原因 | ✅ 「无法获取模块清单：获取模块清单失败 HTTP 404」 |
+
+> 404 符合预期：模块仓库 `webhtv-plugins` **尚未推送**，因此清单地址当前不可达。这条恰好验证了失败路径的可见性。
+
+**本轮发现并修复的 4 个真实缺陷**（均由编译/单测/真机暴露）：
+
+1. **体积格式化单位偏移一位** —— `displaySize(1024)` 返回「1.0 MB」而非「1.0 KB」。循环先除后进位，索引起点写错。影响所有小于 1 MB 的模块显示。
+2. **拉取失败提示被覆盖** —— `render()` 在错误上报后执行，把错误文案刷回通用提示，用户看不到失败原因。改为用 `catalogFailure` 状态保留。
+3. **适配器点击回调失效** —— 初版在构造函数里绑监听并读 `view.getTag()`（从未设置，恒为 null），且 `onRemove(null)` 传了 null。改为每次 `onBindViewHolder` 绑定，并通过 `getBindingAdapterPosition()` 取当前项，避免回收行作用于错误条目。
+4. **`App.execute` 不存在** —— 应为 `Task.execute`；另有缺失的字符串资源与缺失的 `Color` import。
+
+### 16.8 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -805,13 +854,15 @@ SDK 在静态初始化时加载并**按进程缓存**结果，因此本测试类
 | **S0-c** | P2 sherpa 门禁 + 控制器接入 | ✅ 已交付 |
 | **S0-d** | 新仓库 `webhtv-plugins` 骨架 + 打包脚本 + CI + 真机验证 | ✅ 已交付（**待推送**） |
 | **S0-e** | 端到端验证 SDK 从模块目录加载 | ✅ 已交付 |
-| **S0-f** | 模块管理页（设置 → 增强功能 挂载）+ `PackageInstaller` 会话 UI 联调 | 待做 |
+| **S0-f** | 模块管理页（设置 → 增强功能 挂载）+ 卸载入口 | ✅ 已交付 |
+| **S0-g** | 推送 `webhtv-plugins` + 端到端安装联调（`PackageInstaller` 会话 + 播放页实时字幕） | 待做 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
 >
-> **S0-f 必须完成**：模块管理页（挂载到 设置 → 增强功能，与 `lab` 并列）+
-> `PackageInstaller` 会话的 UI 联调 + 模块卸载回退回归。
+> **S0-g 必须完成**：把 `webhtv-plugins` 推送到 GitHub（需要账号权限），
+> 然后做端到端联调——在模块管理页真实安装 sherpa 模块（走 `PackageInstaller` 会话与用户确认），
+> 播放页开启实时字幕并确认 `realtime-subtitle` 日志为 `source=MODULE`，最后卸载并确认回退内置库。
 >
 > 模拟器：`F:/Workspace/webhtv` → `192.168.50.3:5555`（arm64 native bridge 可用）。
 >

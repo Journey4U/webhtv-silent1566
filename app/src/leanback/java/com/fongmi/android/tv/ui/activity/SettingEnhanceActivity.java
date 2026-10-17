@@ -34,6 +34,7 @@ import com.fongmi.android.tv.ui.dialog.LoginStateLearnDialog;
 import com.fongmi.android.tv.ui.dialog.ManagePageDialog;
 import com.fongmi.android.tv.ui.dialog.OneKeySyncDialog;
 import com.fongmi.android.tv.ui.dialog.RemoteTrustDialog;
+import com.fongmi.android.tv.ui.dialog.RuntimeModulesDialog;
 import com.fongmi.android.tv.ui.dialog.ShellProxyDialog;
 import com.fongmi.android.tv.ui.dialog.SiteHealthDialog;
 import com.fongmi.android.tv.ui.dialog.SiteNameDialog;
@@ -78,6 +79,7 @@ public class SettingEnhanceActivity extends BaseActivity {
         mBinding.githubRepo.setOnClickListener(view -> openRepo(URL_GITHUB));
         mBinding.cnbRepo.setOnClickListener(view -> openRepo(URL_CNB));
         mBinding.lab.setOnClickListener(view -> LabActivity.start(this));
+        mBinding.runtimeModules.setOnClickListener(view -> RuntimeModulesDialog.show(this));
         mBinding.driveCheck.setOnClickListener(this::setDriveCheck);
         mBinding.siteName.setOnClickListener(this::setSiteName);
         mBinding.audioSource.setOnClickListener(this::setAudioSource);
@@ -111,6 +113,7 @@ public class SettingEnhanceActivity extends BaseActivity {
         ViewGroup parent = (ViewGroup) mBinding.customCsp.getParent();
         View[] order = {
                 mBinding.lab,
+                mBinding.runtimeModules,
                 mBinding.customCsp,
                 mBinding.webHomeExtension,
                 mBinding.gitCloud,

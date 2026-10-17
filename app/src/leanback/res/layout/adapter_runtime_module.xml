@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.appcompat.widget.LinearLayoutCompat xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="10dp"
+    android:background="@drawable/selector_item"
+    android:descendantFocusability="afterDescendants"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <androidx.appcompat.widget.LinearLayoutCompat
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/name"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="?attr/webhtvColorOnWallpaper"
+            android:textSize="18sp"
+            tools:text="MPV 播放核心" />
+
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:textColor="?attr/webhtvColorPrimary"
+            android:textSize="15sp"
+            tools:text="已安装" />
+
+    </androidx.appcompat.widget.LinearLayoutCompat>
+
+    <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/info"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:ellipsize="end"
+        android:maxLines="3"
+        android:textColor="?attr/webhtvColorOnWallpaper"
+        android:textSize="14sp"
+        tools:text="基于 libmpv 的播放核心，支持 Vulkan、杜比视界与蓝光菜单" />
+
+    <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/meta"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:textColor="?attr/webhtvColorOnWallpaper"
+        android:textSize="13sp"
+        tools:text="1.0.0 · 22.5 MB" />
+
+    <androidx.appcompat.widget.LinearLayoutCompat
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="end"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/action"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:minHeight="0dp"
+            android:minWidth="0dp"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:textAllCaps="false"
+            android:textColor="@color/dialog_outlined_button_text"
+            android:textSize="16sp"
+            app:backgroundTint="@color/dialog_outlined_button_bg"
+            app:cornerRadius="20dp"
+            android:insetBottom="0dp"
+            android:insetTop="0dp"
+            app:strokeColor="@color/dialog_outlined_button_stroke"
+            app:strokeWidth="2dp"
+            tools:text="安装" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/remove"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginStart="10dp"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:minHeight="0dp"
+            android:minWidth="0dp"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:text="@string/runtime_modules_uninstall"
+            android:textAllCaps="false"
+            android:textColor="@color/dialog_outlined_button_text"
+            android:textSize="16sp"
+            app:backgroundTint="@color/dialog_outlined_button_bg"
+            app:cornerRadius="20dp"
+            android:insetBottom="0dp"
+            android:insetTop="0dp"
+            app:strokeColor="@color/dialog_outlined_button_stroke"
+            app:strokeWidth="2dp" />
+
+    </androidx.appcompat.widget.LinearLayoutCompat>
+
+</androidx.appcompat.widget.LinearLayoutCompat>

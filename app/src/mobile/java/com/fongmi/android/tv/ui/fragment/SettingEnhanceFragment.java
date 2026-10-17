@@ -41,6 +41,7 @@ import com.fongmi.android.tv.ui.dialog.LoginStateLearnDialog;
 import com.fongmi.android.tv.ui.dialog.ManagePageDialog;
 import com.fongmi.android.tv.ui.dialog.OneKeySyncDialog;
 import com.fongmi.android.tv.ui.dialog.RemoteTrustDialog;
+import com.fongmi.android.tv.ui.dialog.RuntimeModulesDialog;
 import com.fongmi.android.tv.ui.dialog.ShellProxyDialog;
 import com.fongmi.android.tv.ui.dialog.SiteHealthDialog;
 import com.fongmi.android.tv.ui.dialog.SiteNameDialog;
@@ -94,6 +95,7 @@ public class SettingEnhanceFragment extends BaseFragment {
             return false;
         });
         mBinding.lab.setOnClickListener(view -> LabActivity.start(requireContext()));
+        mBinding.runtimeModules.setOnClickListener(view -> RuntimeModulesDialog.show(this));
         mBinding.driveCheck.setOnClickListener(this::setDriveCheck);
         mBinding.siteName.setOnClickListener(this::setSiteName);
         mBinding.localReader.setOnClickListener(this::setLocalReader);
@@ -130,6 +132,7 @@ public class SettingEnhanceFragment extends BaseFragment {
         ViewGroup parent = (ViewGroup) mBinding.customCsp.getParent();
         View[] order = {
                 mBinding.lab,
+                mBinding.runtimeModules,
                 mBinding.customCsp,
                 mBinding.webHomeExtension,
                 mBinding.gitCloud,
