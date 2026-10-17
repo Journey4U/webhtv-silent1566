@@ -755,7 +755,48 @@ loadFromSherpaOnnxNativePath()
 > 说明：`connectedAndroidTest` 会把测试跑到**所有**已连接设备并在目标设备上卸载宿主应用，
 > 因此真机验证改用 `adb shell am instrument -w -e class <FQCN>` 定向执行。此坑已记录。
 
-### 16.6 后续阶段
+### 16.6 S0-e 已交付（2026-10-18）
+
+**范围**：端到端验证「SDK 是否真的从模块目录加载」——这是本方案最后一个高风险未验证项。
+
+新增 `app/src/androidTest/java/com/fongmi/android/tv/runtime/RuntimeSherpaLoadDeviceTest.java`。
+
+**为什么必须做成独立验证**：`sherpa_onnx.native.path` 能否真正重定向 SDK，是纯路径断言无法证明的。
+SDK 在静态初始化时加载并**按进程缓存**结果，因此本测试类必须在**单独一次 instrumentation 运行**中执行，
+否则同级测试先触碰 sherpa 类会让结论依赖执行顺序。
+
+**取证方式**：读 `/proc/self/maps`，检查 `libsherpa-onnx-jni.so` 的映射路径落在模块包目录还是宿主目录。
+
+**关键前提**：测试 APK **不自带**任何 `.so`（已用 `unzip -l` 确认）。因此加载成功即可归因——
+不可能是宿主内置副本被加载。
+
+**真机结果**（`192.168.50.3:5555`）：**OK (2 tests)**
+
+| 断言 | 结果 |
+| --- | --- |
+| 门禁判定为 `Source.MODULE`，且配置路径 = 模块目录 | ✅ |
+| 设置属性后 SDK 未提前加载（映射为空） | ✅ |
+| `LibraryUtils.load()` 后 `libsherpa-onnx-jni.so` 已被映射 | ✅ |
+| 映射路径**包含模块包目录** `com.silent.runtime.sherpa` | ✅ |
+| 映射路径**不含宿主目录** `com.silent.android.webhtv` | ✅ |
+| 无模块记录时回退 `BUNDLED` 且**不设置**属性 | ✅ |
+
+**测试自身的一个缺陷（已修正）**：首轮 `sdkLoadsTheNativeLibraryFromTheInstalledModule` 失败，
+原因是测试的 configurer 只 `append` 记录路径、**没有设置系统属性**，而生产代码是
+`path -> System.setProperty(...)`。该测试的整个价值就在于镜像生产接线，因此改为与生产完全一致。
+这类「测试没接对线」的失败若不是在真机上跑，很容易被误判为功能缺陷。
+
+**S0-c 遗留验证的最终状态**：
+
+| 项 | 状态 |
+| --- | --- |
+| 模块安装到平台并落到 `nativeLibraryDir` | ✅ 已验证 |
+| 门禁解析为 `Source.MODULE` | ✅ 已验证 |
+| **SDK 实际从模块目录 dlopen** | ✅ **已验证**（本节） |
+| 模块卸载后回退内置库 | ⬜ 未验证（卸载模块后 `RuntimeSherpa` 应回退 `BUNDLED`，逻辑已由单测覆盖，但未做真机卸载回归） |
+| `PackageInstaller` 会话路径的 UI 联调 | ⬜ 未验证（用 `adb install` 验证了模块可安装落位，宿主内会话+确认流程未跑通） |
+
+### 16.7 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -763,19 +804,20 @@ loadFromSherpaOnnxNativePath()
 | **S0-b** | 仓库 / 安装器 / 加载器 / 平台适配 | ✅ 已交付 |
 | **S0-c** | P2 sherpa 门禁 + 控制器接入 | ✅ 已交付 |
 | **S0-d** | 新仓库 `webhtv-plugins` 骨架 + 打包脚本 + CI + 真机验证 | ✅ 已交付（**待推送**） |
-| **S0-e** | 模块管理页（设置 → 增强功能 挂载） | 待做 |
+| **S0-e** | 端到端验证 SDK 从模块目录加载 | ✅ 已交付 |
+| **S0-f** | 模块管理页（设置 → 增强功能 挂载）+ `PackageInstaller` 会话 UI 联调 | 待做 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
 >
-> **S0-c 遗留验证的完成情况**：
->
-> 1. ✅ 模块安装到平台并落到 `nativeLibraryDir`（用 `adb install` 验证；`PackageInstaller` **会话**路径仍待 S0-e 的 UI 联调）
-> 2. ✅ 门禁解析为 `Source.MODULE` 且指向真实模块目录（仪器化测试）；**SDK 实际 dlopen 该路径**待 S0-e 播放联调
-> 3. ⬜ 模块卸载后回退内置库（待 S0-e）
->
-> **下一步（S0-e）必须完成**：模块管理页 + 播放页实时字幕端到端联调，并查
-> `realtime-subtitle` 日志确认 `source=MODULE` 与 SDK 实际加载路径。
+> **S0-f 必须完成**：模块管理页（挂载到 设置 → 增强功能，与 `lab` 并列）+
+> `PackageInstaller` 会话的 UI 联调 + 模块卸载回退回归。
 >
 > 模拟器：`F:/Workspace/webhtv` → `192.168.50.3:5555`（arm64 native bridge 可用）。
-> 真机测试请用 `am instrument` 定向执行，勿用 `connectedAndroidTest`（会波及所有设备并卸载宿主）。
+>
+> **真机测试注意事项**（已踩坑）：
+>
+> 1. 用 `adb shell am instrument -w -e class <FQCN>` 定向执行，**勿用** `connectedAndroidTest`
+>    —— 后者会把测试跑到所有已连接设备，并在目标设备上卸载宿主应用。
+> 2. `RuntimeSherpaLoadDeviceTest` **必须单独运行**：SDK 每进程只加载一次并缓存结果，
+>    同进程内其他测试先触碰 sherpa 类会改变结论。
