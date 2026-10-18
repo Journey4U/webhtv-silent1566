@@ -216,8 +216,8 @@ public class PlayerSetting {
         Boolean cached = mpvAvailable;
         if (cached != null) return cached;
         boolean available = com.fongmi.android.tv.runtime.RuntimeMpv.isAvailable(
-                com.fongmi.android.tv.runtime.RuntimeAndroid.store().isInstalled(
-                        com.fongmi.android.tv.runtime.RuntimeMpv.MODULE_ID),
+                com.fongmi.android.tv.runtime.RuntimeMpv.isModuleInstalled(
+                        com.fongmi.android.tv.runtime.RuntimeAndroid.packageInfo()),
                 is.xyz.mpv.MPVLib.isBundled(App.get()));
         mpvAvailable = available;
         return available;

@@ -1122,7 +1122,43 @@ Gradle 复用了旧 APK 而未截断。
 **回滚路径**：`-PmpvBundle=true`。此外运行期仍有 assets 回退逻辑，
 且 `PlayerSetting.isMpvAvailable()` 在两者皆无时隐藏 MPV 内核。
 
-### 16.15 后续阶段
+### 16.15 S2-d 已交付（2026-10-18）：可用性改查平台，修复侧载模块不可用
+
+**范围**：修复 S2-b 移除 assets 后暴露的真实缺陷。
+
+**缺陷**：`isMpvAvailable()` 原先查**宿主自己的安装注册表**（`RuntimeStore.isInstalled`），
+而注册表只由应用内的安装流程写入。因此通过任何其他途径安装的模块——
+侧载 APK、文件管理器、`adb install`——在设备上真实可用，宿主却认为不可用，
+MPV 内核直接不显示。
+
+**这不是理论问题**：S2-b 移除 assets 后，真机测试立刻报
+`MPV should be offered when its module is installed` 失败。移除 assets 之前
+这个缺陷被掩盖了，因为 assets 回退总是让判定为真。
+
+**修复**：可用性改问平台——`RuntimePlatform.PackageInfo.nativeLibraryDir(packageName) != null`。
+注册表仍负责版本与摘要元数据，但**不再是「什么存在」的事实来源**。
+
+| 文件 | 改动 |
+| --- | --- |
+| `runtime/RuntimeMpv.java` | 新增 `MODULE_PACKAGE` 常量与 `isModuleInstalled(PackageInfo)` |
+| `setting/PlayerSetting.java` | `isMpvAvailable()` 改用平台探测 |
+
+**验证**：
+
+| 项 | 结果 |
+| --- | --- |
+| 宿主单测 | **212 tests, 0 failures**（`RuntimeMpvTest` 20 项，新增 3 项平台探测回归）|
+| 真机 `RuntimeMpvFunctionalDeviceTest` | OK (3 tests) |
+| 真机 `RuntimeMpvLoadDeviceTest` | OK (3 tests) |
+| 真机 `RuntimeMpvPlaybackDeviceTest` | OK (3 tests) |
+
+**同时完成了 S2-b 的设备回归**：设备已装**不含 `assets/mpv-libs`** 的新 APK
+（`unzip -l` 确认条目数 = 0），而模块路径的全部真机测试仍然通过——
+9 库 dlopen、映射来源正确、H.264 解码出首帧。这证明移除 assets 是安全的。
+
+新增的 3 项回归测试：平台探测（有/无/异常）、侧载模块使 MPV 可用、包管理器异常时不抛异常。
+
+### 16.16 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -1140,6 +1176,7 @@ Gradle 复用了旧 APK 而未截断。
 | **S2-b-前置** | mpv 模块功能验证（核心初始化 + 属性读取） | ✅ 已交付 |
 | **S2-c** | 真实播放回归（解复用 + H.264 解码 + 首帧输出） | ✅ 已交付 |
 | **S2-b** | 移除宿主 `assets/mpv-libs` | ✅ 已交付（实测 -44.6 MB） |
+| **S2-d** | 可用性改查平台（修复侧载模块不可用）+ S2-b 设备回归 | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。

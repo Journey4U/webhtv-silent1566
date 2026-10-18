@@ -405,4 +405,58 @@ public class RuntimeMpvTest {
     public void availableWhenBothSourcesExist() {
         assertTrue(RuntimeMpv.isAvailable(true, true));
     }
+
+    /**
+     * Availability must be decided by the platform, not by the host's install registry.
+     *
+     * <p>A module installed by any route — the in-app flow, a sideloaded APK, a file manager — is
+     * functional on the device. Gating on our own bookkeeping hid the engine from users who
+     * installed it another way; this was a real device failure, not a hypothetical one.
+     */
+    @Test
+    public void moduleInstalledIsDecidedByThePlatformNotTheRegistry() {
+        RuntimePlatform.PackageInfo present = packageInfo(new File("/data/app/com.silent.runtime.mpv/lib/arm64"));
+        RuntimePlatform.PackageInfo absent = packageInfo(null);
+
+        // No registry is consulted at all: the probe answers from the package manager.
+        assertTrue(RuntimeMpv.isModuleInstalled(present));
+        assertFalse(RuntimeMpv.isModuleInstalled(absent));
+        assertFalse(RuntimeMpv.isModuleInstalled(null));
+    }
+
+    /** A sideloaded module must make MPV available even though nothing was ever recorded. */
+    @Test
+    public void sideloadedModuleMakesMpvAvailable() {
+        RuntimePlatform.PackageInfo sideloaded = packageInfo(new File("/data/app/com.silent.runtime.mpv/lib/arm64"));
+
+        assertTrue(RuntimeMpv.isAvailable(RuntimeMpv.isModuleInstalled(sideloaded), false));
+    }
+
+    /** The platform probe must not throw when the package manager misbehaves. */
+    @Test
+    public void platformProbeFailureMeansNotInstalled() {
+        RuntimePlatform.PackageInfo throwing = new RuntimePlatform.PackageInfo() {
+            @Override
+            public File nativeLibraryDir(String packageName) {
+                throw new IllegalStateException("package manager unavailable");
+            }
+
+            @Override
+            public int versionCode(String packageName) {
+                return -1;
+            }
+
+            @Override
+            public File apkPath(String packageName) {
+                return null;
+            }
+
+            @Override
+            public String apkDigest(String packageName) {
+                return null;
+            }
+        };
+
+        assertFalse(RuntimeMpv.isModuleInstalled(throwing));
+    }
 }

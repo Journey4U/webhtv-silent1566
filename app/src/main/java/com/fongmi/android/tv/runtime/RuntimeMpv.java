@@ -21,6 +21,9 @@ public final class RuntimeMpv {
 
     public static final String MODULE_ID = "mpv";
 
+    /** Package name of the MPV module APK. */
+    public static final String MODULE_PACKAGE = "com.silent.runtime.mpv";
+
     /**
      * Whether MPV can be offered as a playback engine.
      *
@@ -32,6 +35,24 @@ public final class RuntimeMpv {
      */
     public static boolean isAvailable(boolean moduleInstalled, boolean bundled) {
         return moduleInstalled || bundled;
+    }
+
+    /**
+     * Whether the module package is actually present on the device.
+     *
+     * <p>Deliberately asks the platform rather than the host's install registry. A module installed
+     * by any route — the in-app flow, a sideloaded APK, a file manager — is functional on the
+     * device, and gating availability on our own bookkeeping would hide the engine from users who
+     * installed it another way. The registry still tracks version and digest metadata; it is not
+     * the source of truth for what exists.
+     */
+    public static boolean isModuleInstalled(RuntimePlatform.PackageInfo packageInfo) {
+        if (packageInfo == null) return false;
+        try {
+            return packageInfo.nativeLibraryDir(MODULE_PACKAGE) != null;
+        } catch (Throwable e) {
+            return false;
+        }
     }
 
     /** Outcome of preparing the MPV libraries. */
