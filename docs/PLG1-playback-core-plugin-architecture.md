@@ -1158,7 +1158,59 @@ MPV 内核直接不显示。
 
 新增的 3 项回归测试：平台探测（有/无/异常）、侧载模块使 MPV 可用、包管理器异常时不抛异常。
 
-### 16.16 后续阶段
+### 16.16 S0-h 已交付（2026-10-18）：UI 侧安装联调，端到端跑通
+
+**范围**：让用户在模块管理页真正完成安装。此前所有能力都在代码层就绪，但缺少
+「点按钮安装」这一环的验证。
+
+**真机端到端结果**（`192.168.50.3:5555`，leanback 版）：
+
+| 阶段 | 证据 |
+| --- | --- |
+| 点击安装 | `RuntimeModule: install requested id=mpv catalog=true module=true` |
+| 下载 | 进度对话框「下载 1.0.0 ...」 |
+| **摘要校验** | `progress id=mpv msg=校验完整性 ...` |
+| 交给系统安装器 | `progress id=mpv msg=安装模块 ...` |
+| 系统确认框 | `com.silent.runtime.mpv` / `安装来源：默影视 \| 大小：43 MB` / `你确定需要安装此应用吗？` |
+| 安装成功 | `installed id=mpv version=1.0.0` + Toast「mpv 安装完成」 |
+| 列表刷新 | 状态变为「已安装」，按钮变为「卸载」 |
+| 平台确认 | `pm list packages` 出现 `com.silent.runtime.mpv` |
+
+**本轮修复的 4 个真实缺陷（全部由真机暴露）**：
+
+**1. 点击安装即崩溃 —— `?attr/webhtvColorPrimary` 未定义**
+`webhtvColorPrimary` 只在 `webhtv_attrs.xml` **声明**，全仓**没有任何主题给它赋值**，
+inflate 时抛 `UnsupportedOperationException: Failed to resolve attribute`。
+改用 `?attr/colorPrimary`（mobile 布局既有 3 处先例）。
+注意：两个 flavor 都会崩，只是先在 mobile 上触发。
+
+**2. 点击安装即崩溃 —— `StringBuilder.isEmpty()` 是 Java 15 API**
+设备（API 28）上不存在，抛 `NoSuchMethodError`。
+这是**我自己引入的**：早前把 `safe.length() == 0` "顺手清理"成 `safe.isEmpty()`，
+把可用代码改成了崩溃。
+值得记录的是：静态检查器 `prefer-string-is-empty` **正是建议这样改的**——
+这是一条会致崩的误报，不能采纳。已反向修复并在注释中写明原因。
+
+**3. 安装阻塞 UI 线程**
+`installer.install(...)` 同步下载 43 MB 且在点击回调线程上执行，
+导致界面冻结、无进度、无日志。改为 `Task.execute(...)` 派发到后台。
+
+**4. 关键路径无可观测性**
+`RuntimeModulesDialog` 与 `RuntimeInstaller` 原本**完全没有日志**，无法判断卡在哪一步。
+且首选的 `SpiderDebug.log` 会经 `DebugLogStore.acceptsTag` 过滤，
+默认配置下**静默丢弃**，所以它不能用作诊断通道。改用 `android.util.Log`。
+
+**一个耗时的排查教训（方法层面）**：
+
+我长时间用 `adb shell input tap` 模拟点击，始终无响应，一度怀疑触摸被拦截。
+实际原因是：**这是 leanback（TV）应用，主交互是遥控器焦点 + 确定键，不是触摸**。
+`uiautomator` 显示 `focused=true` 的正是目标按钮，改用
+`input keyevent KEYCODE_DPAD_CENTER` 后流程立即走通。
+**TV 端 UI 验证必须用 DPAD 事件，不能用 tap。**
+
+**验证**：宿主单测 212 项全绿（runtime 142 / subtitle 70）。
+
+### 16.17 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -1170,7 +1222,7 @@ MPV 内核直接不显示。
 | **S0-f** | 模块管理页（设置 → 增强功能 挂载）+ 卸载入口 | ✅ 已交付 |
 | **S0-g** | 推送 `webhtv-plugins` + 已发布产物端到端验证 | ✅ 已交付 |
 | **S1** | mpv 播放核心模块化（9 库 + `hostLibraries` 契约） | ✅ 已交付 |
-| **S0-h** | UI 侧安装联调（`PackageInstaller` 会话 + 播放页端到端） | 待做 |
+| **S0-h** | UI 侧安装联调（`PackageInstaller` 会话端到端） | ✅ 已交付 |
 | **S1-b** | mpv 真实 dlopen + `/proc/self/maps` 取证 | ✅ 已交付 |
 | **S2-a** | 内核可用性接入模块（为移除 assets 铺路） | ✅ 已交付 |
 | **S2-b-前置** | mpv 模块功能验证（核心初始化 + 属性读取） | ✅ 已交付 |

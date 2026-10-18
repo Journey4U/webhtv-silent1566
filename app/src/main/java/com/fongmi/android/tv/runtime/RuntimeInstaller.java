@@ -159,7 +159,10 @@ public final class RuntimeInstaller {
                     || c == '.' || c == '_' || c == '-';
             safe.append(ok ? c : '_');
         }
-        return safe.isEmpty() ? "module.apk" : safe.toString();
+        // StringBuilder.isEmpty() is a Java 15 API absent on the device runtimes this app supports.
+        // length() == 0 is the portable form; using isEmpty() compiles fine and then throws
+        // NoSuchMethodError on device.
+        return safe.length() == 0 ? "module.apk" : safe.toString();
     }
 
     private static void progress(Callback callback, String message) {

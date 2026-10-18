@@ -32,8 +32,11 @@ import com.fongmi.android.tv.utils.Notify;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.Task;
 import com.fongmi.android.tv.utils.Util;
+
+import android.util.Log;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -45,6 +48,8 @@ import java.util.List;
  * owns the uninstall.
  */
 public class RuntimeModulesDialog extends BaseAlertDialog implements RuntimeModuleAdapter.Listener {
+
+    private static final String TAG_LOG = "RuntimeModule";
 
     private DialogRuntimeModulesBinding binding;
     private RuntimeModuleAdapter adapter;
@@ -161,21 +166,34 @@ public class RuntimeModulesDialog extends BaseAlertDialog implements RuntimeModu
     @Override
     public void onAction(RuntimeModuleAdapter.Item item) {
         RuntimeCatalog.RuntimeModule module = catalog == null ? null : catalog.find(item.id);
+        // Log via android.util.Log, not SpiderDebug: SpiderDebug filters by configured diagnostic
+        // categories and drops the message silently when they are off, which made this path
+        // impossible to diagnose from a device.
+        Log.i(TAG_LOG, "install requested id=" + item.id + " catalog=" + (catalog != null)
+                + " module=" + (module != null));
         if (module == null) return;
         if (!hasArtifactForThisDevice(module)) {
+            Log.w(TAG_LOG, "no artifact for abi=" + abi() + " id=" + item.id);
             Notify.show(getString(R.string.runtime_modules_unsupported_abi));
             return;
         }
         showProgress();
         RuntimeInstaller installer = RuntimeAndroid.installer(store());
-        installer.install(module, abi(), RuntimeAndroid.downloadDir(), new RuntimeInstaller.Callback() {
+        String abi = abi();
+        File workDir = RuntimeAndroid.downloadDir();
+        // Install synchronously downloads tens of megabytes and then drives the platform installer.
+        // Running that on the click handler's thread would block the UI for the whole download —
+        // no progress, no response, and nothing in the log. Dispatch it off the main thread.
+        Task.execute(() -> installer.install(module, abi, workDir, new RuntimeInstaller.Callback() {
             @Override
             public void onProgress(String message) {
+                Log.i(TAG_LOG, "progress id=" + item.id + " msg=" + message);
                 App.post(() -> progressText.setText(message));
             }
 
             @Override
             public void onInstalled(RuntimeStore.Entry entry) {
+                Log.i(TAG_LOG, "installed id=" + entry.id + " version=" + entry.displayVersion());
                 App.post(() -> {
                     dismissProgress();
                     // The kernel picker caches whether MPV is available; without this a user who
@@ -189,12 +207,13 @@ public class RuntimeModulesDialog extends BaseAlertDialog implements RuntimeModu
 
             @Override
             public void onFailed(String message) {
+                Log.w(TAG_LOG, "install failed id=" + item.id + " msg=" + message);
                 App.post(() -> {
                     dismissProgress();
                     Notify.show(getString(R.string.runtime_modules_install_failed, message));
                 });
             }
-        });
+        }));
     }
 
     @Override

@@ -31,7 +31,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="12dp"
-            android:textColor="?attr/webhtvColorPrimary"
+            android:textColor="?attr/colorPrimary"
             android:textSize="13sp"
             tools:text="已安装" />
 
