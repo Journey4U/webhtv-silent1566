@@ -140,7 +140,9 @@ public final class IjkMediaPlayer extends AbstractMediaPlayer {
 
         @Override // tv.danmaku.ijk.media.player.IjkLibLoader
         public void loadLibrary(String str) {
-            System.loadLibrary(str);
+            // Prefer a resolver-provided absolute path so a module-delivered library can be used;
+            // System.loadLibrary alone searches only the host's nativeLibraryDir.
+            loadLibraryOrResolved(str);
         }
     }
 

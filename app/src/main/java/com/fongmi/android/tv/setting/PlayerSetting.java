@@ -84,6 +84,8 @@ public class PlayerSetting {
     private static volatile int activePlayer = NONE;
     /** Cached MPV availability; null until first probed. Cannot change while the process lives. */
     private static volatile Boolean mpvAvailable;
+    /** Cached IJK availability; null until first probed. Cannot change while the process lives. */
+    private static volatile Boolean ijkAvailable;
 
     public static int getPlayer() {
         int player = Prefers.getInt("player", EXO);
@@ -197,8 +199,47 @@ public class PlayerSetting {
         return true;
     }
 
+    /**
+     * Whether IJK can be offered.
+     *
+     * <p>Satisfied either by an installed module or by the transitional copy still bundled in the
+     * APK. Once the bundled libraries are removed this returns true only for users who installed
+     * the module, and because the callers already gate on this method the removal needs no further
+     * change at those call sites.
+     *
+     * <p>Cached: the answer cannot change while the process lives, and probing touches the package
+     * manager.
+     */
     public static boolean isIjkAvailable() {
-        return true;
+        Boolean cached = ijkAvailable;
+        if (cached != null) return cached;
+        boolean available = com.fongmi.android.tv.runtime.RuntimeIjk.isAvailable(
+                com.fongmi.android.tv.runtime.RuntimeIjk.isModuleInstalled(
+                        com.fongmi.android.tv.runtime.RuntimeAndroid.packageInfo()),
+                isIjkBundled());
+        ijkAvailable = available;
+        return available;
+    }
+
+    /** Drops the cached IJK availability answer; for tests and for post-install refreshes. */
+    public static void resetIjkAvailability() {
+        ijkAvailable = null;
+    }
+
+    /**
+     * Whether this APK still ships the IJK native libraries.
+     *
+     * <p>Probed from the app's own native library directory, which is where the platform places
+     * anything declared in {@code jniLibs}.
+     */
+    private static boolean isIjkBundled() {
+        try {
+            String dir = App.get().getApplicationInfo().nativeLibraryDir;
+            if (dir == null) return false;
+            return new java.io.File(dir, "libijkplayer.so").isFile();
+        } catch (Throwable e) {
+            return false;
+        }
     }
 
     /**

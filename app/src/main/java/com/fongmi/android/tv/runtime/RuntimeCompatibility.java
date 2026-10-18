@@ -19,7 +19,10 @@ public final class RuntimeCompatibility {
             // Reserved for the first shipped module (P2 sherpa-onnx pilot).
             "sherpa-onnx-jni-v1",
             // Reserved for the MPV module (P1); must stay in sync with the host libc++ digest.
-            "mpv-jni-ffmpeg-shared-v1"
+            "mpv-jni-ffmpeg-shared-v1",
+            // The IJK module (P4). Its libraries depend only on system libraries, so there is no
+            // host-library digest to keep in sync.
+            "ijk-jni-v1"
     )));
 
     private RuntimeCompatibility() {

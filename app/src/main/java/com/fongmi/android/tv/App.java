@@ -128,6 +128,12 @@ public class App extends Application implements Application.ActivityLifecycleCal
         }
         Notify.createChannel();
         ProxySetting.apply();
+        // Point IJK at an installed module, if any. IJK loads its libraries by bare name via
+        // System.loadLibrary, which only searches the host's own directory, so a module-delivered
+        // copy is invisible without this resolver. The resolver re-checks on each lookup, so
+        // installing the module later still works.
+        com.fongmi.android.tv.runtime.RuntimeIjk.install(
+                com.fongmi.android.tv.runtime.RuntimeAndroid.packageInfo());
         registerActivityLifecycleCallbacks(this);
         registerContentHandlers();
         resumeBackgroundServices();

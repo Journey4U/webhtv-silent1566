@@ -933,9 +933,9 @@ libplayer.so     -> libmwscale, libmvcodec, libmpv, libc++_shared
 
 | 项 | 结果 |
 | --- | --- |
-| 宿主单测 | **205 tests, 0 failures**（runtime 135 含新增 `RuntimeMpvTest` 13 / subtitle 70 无回归）|
+| 宿主单测 | **205 tests, 0 failures**（runtime 135 含新增 `RuntimeMpvTest` 13 / subtitle 70 无回归） |
 | **真机仪器化（mpv）** | **OK (9 tests)** @ `192.168.50.3:5555` |
-| 真机仪器化（其余） | 16 tests（模块 10 + 加载 2 + 仓库 4）|
+| 真机仪器化（其余） | 16 tests（模块 10 + 加载 2 + 仓库 4） |
 
 真机 9 项覆盖：模块暴露 9 库且**不自带** `libc++_shared.so`、宿主提供的库摘要与模块声明一致、
 对真实 `nativeLibraryDir` 校验通过、**宿主库最先加载且模块按序跟随（10 次加载）**、
@@ -1147,7 +1147,7 @@ MPV 内核直接不显示。
 
 | 项 | 结果 |
 | --- | --- |
-| 宿主单测 | **212 tests, 0 failures**（`RuntimeMpvTest` 20 项，新增 3 项平台探测回归）|
+| 宿主单测 | **212 tests, 0 failures**（`RuntimeMpvTest` 20 项，新增 3 项平台探测回归） |
 | 真机 `RuntimeMpvFunctionalDeviceTest` | OK (3 tests) |
 | 真机 `RuntimeMpvLoadDeviceTest` | OK (3 tests) |
 | 真机 `RuntimeMpvPlaybackDeviceTest` | OK (3 tests) |
@@ -1210,7 +1210,76 @@ inflate 时抛 `UnsupportedOperationException: Failed to resolve attribute`。
 
 **验证**：宿主单测 212 项全绿（runtime 142 / subtitle 70）。
 
-### 16.17 后续阶段
+### 16.17 S3 已交付（2026-10-19）：IJK 内核模块化
+
+**范围**：把 IJK 的 3 个原生库移入模块，并解决它与 MPV 的根本差异。
+
+**与 MPV 的关键差异：加载方式不同**
+
+| | MPV | IJK |
+| --- | --- | --- |
+| 加载调用 | `System.load(绝对路径)` | `System.loadLibrary("ijkffmpeg")` **按裸名搜索** |
+| 搜索范围 | 任意路径 | **仅宿主自己的 `nativeLibraryDir`** |
+| 模块库可见性 | 天然可见 | **不可见** |
+
+`System.loadLibrary` 只查宿主自己的目录，所以模块里的库对它完全不可见。
+且 `IjkMediaPlayer.LOADER` 是 `private static final`，无法从外部替换。
+
+**解决方案**：给 `IjkLibLoader` 加一个宿主可注入的 `Resolver`。
+`loadLibrary` 先问 resolver；resolver 返回文件就用绝对路径加载，返回 null 才回退
+`System.loadLibrary`。这样既让模块库能被找到，又保留了「仍打包库」时的原行为。
+
+**依赖关系（`readelf -d` 实测）**：
+
+```text
+libijkffmpeg.so -> 仅系统库
+libijksdl.so    -> libijkffmpeg + 系统库
+libijkplayer.so -> libijkffmpeg, libijksdl + 系统库
+```
+
+**三库都不依赖 `libc++_shared.so`**，所以 `hostLibraries` 为空——
+比 mpv 简单，没有宿主库摘要契约要维护。
+
+**模块产物**：
+
+| ABI | 大小 | 库数 | hostLibraries |
+| --- | --- | --- | --- |
+| arm64-v8a | 10,355,321 B (9.9 MB) | 3 | 空 |
+| armeabi-v7a | 7,623,295 B (7.3 MB) | 3 | 空 |
+
+**改动**：
+
+| 文件 | 改动 |
+| --- | --- |
+| `tv/danmaku/.../IjkLibLoader.java` | 新增 `Resolver` 注入点与 `loadLibraryOrResolved` |
+| `tv/danmaku/.../IjkMediaPlayer.java` | `AnonymousClass1.loadLibrary` 改走解析路径 |
+| `runtime/RuntimeIjk.java`（新） | 安装 resolver；可用性判定；裸名匹配 |
+| `runtime/RuntimeCompatibility.java` | 登记 `ijk-jni-v1` 契约 |
+| `setting/PlayerSetting.java` | `isIjkAvailable()` 接模块状态（原为硬编码 `true`） |
+| `App.java` | 启动时安装 resolver |
+
+**设计要点**：resolver **每次查找都重新检查模块**，而不是捕获安装时的快照。
+这样「先装模块」和「先启动播放」的顺序无关紧要。代价可接受——
+`IjkLibLoader` 自身会缓存加载尝试，每库每进程最多查一次。
+
+**验证**：
+
+| 项 | 结果 |
+| --- | --- |
+| 宿主单测 | **152 tests, 0 failures**（`RuntimeIjkTest` 10 项） |
+| **真机仪器化** | **OK (6 tests)** @ `192.168.50.3:5555` |
+
+真机 6 项覆盖：模块暴露 3 库、**裸名解析到模块文件**、
+**三库真实加载且映射自模块目录**（`librariesLoadFromTheModuleForReal` 用
+`/proc/self/maps` 取证）、可用性在模块已装时为真、resolver 与安装顺序无关、
+无模块时回退而不抛异常。
+
+**又一次踩到同一个坑**：首轮 4 项失败报 `NoSuchMethodError: install(PackageInfo)`。
+原因是我重建了测试 APK 但**没重建宿主 APK**——设备上还是旧签名。
+仪器化测试的类跑在宿主进程内，**改了宿主代码必须重装宿主**。
+这个坑在 S2-b-前置已记录过一次，这次仍复现，说明它足够容易忘。
+
+### 16.18 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -1229,6 +1298,7 @@ inflate 时抛 `UnsupportedOperationException: Failed to resolve attribute`。
 | **S2-c** | 真实播放回归（解复用 + H.264 解码 + 首帧输出） | ✅ 已交付 |
 | **S2-b** | 移除宿主 `assets/mpv-libs` | ✅ 已交付（实测 -44.6 MB） |
 | **S2-d** | 可用性改查平台（修复侧载模块不可用）+ S2-b 设备回归 | ✅ 已交付 |
+| **S3** | IJK 内核模块化（3 库 + resolver 注入） | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
