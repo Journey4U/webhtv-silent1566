@@ -21,6 +21,19 @@ public final class RuntimeMpv {
 
     public static final String MODULE_ID = "mpv";
 
+    /**
+     * Whether MPV can be offered as a playback engine.
+     *
+     * <p>Two sources satisfy this: an installed module, or the transitional copy still bundled in
+     * the APK. Keeping the rule in one place makes the asset removal a no-op here — once the
+     * bundled probe returns false, only an installed module enables the engine.
+     *
+     * <p>Pure function so the policy is testable without a device; the callers supply the probes.
+     */
+    public static boolean isAvailable(boolean moduleInstalled, boolean bundled) {
+        return moduleInstalled || bundled;
+    }
+
     /** Outcome of preparing the MPV libraries. */
     public static final class Status {
 

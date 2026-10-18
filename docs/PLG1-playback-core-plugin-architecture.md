@@ -976,7 +976,41 @@ libplayer.so     -> libmwscale, libmvcodec, libmpv, libc++_shared
 2. **不能假设进程干净**：原生库一旦加载就无法卸载，同类中先跑的测试已经映射过它们。
    原断言「加载前映射为空」在同一进程内必然失败。改为只断言**映射来源**——这个结论与谁先触发加载无关。
 
-### 16.11 后续阶段
+### 16.11 S2-a 已交付（2026-10-18）：内核可用性接入模块
+
+**范围**：让「MPV 是否可用」由**模块是否已装**决定，为移除 `assets/mpv-libs` 铺路。
+
+**为什么必须单独做**：移除 assets 后，内核选择器若仍无条件列出 MPV，用户选中就会在加载时失败。
+必须在移除**之前**先把门禁接好，否则 S2-b 会变成一次功能性回归。
+
+**改动的关键性质：19 个调用点零改动。** `PlayerSetting.isPlayerAvailable()` 早已存在且被回退链、
+内核选择器、手动切换共同使用（`PlayerManager` ×6、`PlaybackService` ×13）。只要把 MPV 的判定接进去，
+所有既有调用点自动生效——这正是第一轮设计里把它标为「现成扩展点」的价值。
+
+| 文件 | 改动 |
+| --- | --- |
+| `runtime/RuntimeMpv.java` | 新增纯函数 `isAvailable(moduleInstalled, bundled)` |
+| `is/xyz/mpv/MPVLib.java` | 新增 `isBundled(Context)`，探测 APK 是否仍带 mpv assets |
+| `setting/PlayerSetting.java` | `isPlayerAvailable` 接 MPV；`isMpvAvailable()` 带缓存；`resetMpvAvailability()` |
+| `ui/dialog/RuntimeModulesDialog.java` | 安装/卸载后重置缓存 |
+
+**过渡期语义**：`模块已装 || APK 仍内置`。两者皆有也可用。移除 assets 后自动收敛为
+「只有装了模块的用户才有 MPV」——**同一份代码，无需再改**。
+
+**缓存与失效**：判定结果在进程内不会变（模块安装需重启进程才会被加载），故缓存。
+但用户在模块管理页刚装完就去看内核选择器时缓存会是旧的，因此安装/卸载成功后显式重置。
+这是真实可复现的路径，不是理论问题。
+
+**验证**：209 tests 全绿（runtime 139 含新增 `RuntimeMpvTest` 4 项可用性规则 / subtitle 70）；
+mobile 与 leanback 两 flavor 均编译通过。
+
+新增的 4 项可用性规则测试：模块已装→可用、仅内置→可用、**两者皆无→不可用**（移除后的预期态）、
+两者皆有→可用。
+
+> **仍未验证**：真机上「装模块 → 内核选择器出现 MPV」与「卸载 → 消失」的端到端 UI 行为，
+> 以及真实播放回归。这些留待 S0-h/S2-b。
+
+### 16.12 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -990,14 +1024,17 @@ libplayer.so     -> libmwscale, libmvcodec, libmpv, libc++_shared
 | **S1** | mpv 播放核心模块化（9 库 + `hostLibraries` 契约） | ✅ 已交付 |
 | **S0-h** | UI 侧安装联调（`PackageInstaller` 会话 + 播放页端到端） | 待做 |
 | **S1-b** | mpv 真实 dlopen + `/proc/self/maps` 取证 | ✅ 已交付 |
-| **S2** | 移除宿主 `assets/mpv-libs`（发布体积真正下降 37.5 MB） | 待做（前置已满足） |
+| **S2-a** | 内核可用性接入模块（为移除 assets 铺路） | ✅ 已交付 |
+| **S2-b** | 移除宿主 `assets/mpv-libs`（发布体积真正下降 37.5 MB） | 待做（前置已满足） |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
 >
-> **S1 未做**：宿主仍打包 `assets/mpv-libs`，所以 APK 体积**尚未下降**。移除它是 S2 的独立步骤。
-> S1-b 已补齐真实加载证据（9 库 dlopen 成功、映射来源正确、无 soname 冲突），
-> **S2 的前置条件已满足**。仍未经真实播放回归（未对比 `player-engine` 日志的 hwdec/render 输出）。
+> **S2-b 前置条件已满足**：S1-b 证明 9 库能真实 dlopen 且映射来源正确；
+> S2-a 已把内核可用性接到模块状态上，且 19 个既有调用点自动生效。
+>
+> **S2-b 仍需注意**：移除 assets 后建议保留构建开关（如 `-PmpvBundled=true`）以便回滚，
+> 并做一次真实播放回归（对比 `player-engine` 日志的 hwdec/render 输出与移除前一致）。
 >
 > **S0-h 剩余项**（均需 UI 交互，坐标自动化在模拟器上不可靠）：
 >

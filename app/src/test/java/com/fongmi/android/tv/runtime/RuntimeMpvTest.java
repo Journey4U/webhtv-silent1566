@@ -377,4 +377,32 @@ public class RuntimeMpvTest {
         assertTrue(status.getProblem(), status.isOk());
         assertEquals(List.of("libplayer.so"), loadCalls);
     }
+
+    /**
+     * MPV availability is satisfied by either an installed module or the transitional bundled copy.
+     *
+     * <p>Pinning this matters for the asset removal: once the bundled probe returns false, an
+     * absent module must make the engine unavailable. If this rule were wrong the kernel picker
+     * would still offer MPV and playback would fail at load time.
+     */
+    @Test
+    public void moduleInstalledMakesMpvAvailable() {
+        assertTrue(RuntimeMpv.isAvailable(true, false));
+    }
+
+    @Test
+    public void bundledCopyMakesMpvAvailableWithoutAModule() {
+        assertTrue(RuntimeMpv.isAvailable(false, true));
+    }
+
+    @Test
+    public void neitherModuleNorBundledCopyMeansUnavailable() {
+        // The post-removal state for a user who has not installed the module.
+        assertFalse(RuntimeMpv.isAvailable(false, false));
+    }
+
+    @Test
+    public void availableWhenBothSourcesExist() {
+        assertTrue(RuntimeMpv.isAvailable(true, true));
+    }
 }

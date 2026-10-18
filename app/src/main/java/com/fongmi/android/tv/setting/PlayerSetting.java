@@ -82,6 +82,8 @@ public class PlayerSetting {
      * 由 PlayerManager 在建引擎/切引擎时写入，volatile 以便工作线程（取播放地址）读到最新值。
      */
     private static volatile int activePlayer = NONE;
+    /** Cached MPV availability; null until first probed. Cannot change while the process lives. */
+    private static volatile Boolean mpvAvailable;
 
     public static int getPlayer() {
         int player = Prefers.getInt("player", EXO);
@@ -190,11 +192,40 @@ public class PlayerSetting {
     }
 
     public static boolean isPlayerAvailable(int player) {
-        return player != IJK || isIjkAvailable();
+        if (player == IJK) return isIjkAvailable();
+        if (player == MPV) return isMpvAvailable();
+        return true;
     }
 
     public static boolean isIjkAvailable() {
         return true;
+    }
+
+    /**
+     * Whether MPV can be offered.
+     *
+     * <p>Satisfied either by an installed module or by the transitional copy still bundled in the
+     * APK. Once the bundled assets are removed this returns true only for users who installed the
+     * module, which is exactly the intent — and because the callers already gate on this method,
+     * the removal needs no further change at those 19 call sites.
+     *
+     * <p>Cached: the answer cannot change while the process lives, and probing touches the asset
+     * manager.
+     */
+    public static boolean isMpvAvailable() {
+        Boolean cached = mpvAvailable;
+        if (cached != null) return cached;
+        boolean available = com.fongmi.android.tv.runtime.RuntimeMpv.isAvailable(
+                com.fongmi.android.tv.runtime.RuntimeAndroid.store().isInstalled(
+                        com.fongmi.android.tv.runtime.RuntimeMpv.MODULE_ID),
+                is.xyz.mpv.MPVLib.isBundled(App.get()));
+        mpvAvailable = available;
+        return available;
+    }
+
+    /** Drops the cached availability answer; for tests and for post-install refreshes. */
+    public static void resetMpvAvailability() {
+        mpvAvailable = null;
     }
 
     public static int kernelCount() {

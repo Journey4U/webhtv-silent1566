@@ -204,6 +204,22 @@ public final class MPVLib {
         return isBundledVulkanEnabled(context) && isDeviceVulkan13Capable(context);
     }
 
+    /**
+     * Whether this APK still ships the MPV native libraries in its assets.
+     *
+     * <p>Exposed because the kernel may now be delivered as an installable module: callers need to
+     * know whether the bundled copy exists before offering the engine. Returns {@code false} once
+     * the assets are removed.
+     */
+    public static boolean isBundled(Context context) {
+        if (context == null) return false;
+        try {
+            return chooseAbi(context.getApplicationContext().getAssets()) != null;
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
     private static String chooseAbi(AssetManager assets) {
         for (String abi : Build.SUPPORTED_ABIS) {
             if (assetExists(assets, abi, "mpv")) return abi;

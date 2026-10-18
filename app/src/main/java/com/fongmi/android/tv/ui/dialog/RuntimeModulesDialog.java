@@ -24,6 +24,7 @@ import com.fongmi.android.tv.runtime.RuntimeInstaller;
 import com.fongmi.android.tv.runtime.RuntimeModulePolicy;
 import com.fongmi.android.tv.runtime.RuntimeRepository;
 import com.fongmi.android.tv.runtime.RuntimeStore;
+import com.fongmi.android.tv.setting.PlayerSetting;
 import com.fongmi.android.tv.theme.WebHtvAlertDialogBuilder;
 import com.fongmi.android.tv.ui.adapter.RuntimeModuleAdapter;
 import com.fongmi.android.tv.ui.custom.SpaceItemDecoration;
@@ -177,6 +178,10 @@ public class RuntimeModulesDialog extends BaseAlertDialog implements RuntimeModu
             public void onInstalled(RuntimeStore.Entry entry) {
                 App.post(() -> {
                     dismissProgress();
+                    // The kernel picker caches whether MPV is available; without this a user who
+                    // just installed the module would still not see it once the bundled assets are
+                    // gone.
+                    PlayerSetting.resetMpvAvailability();
                     Notify.show(getString(R.string.runtime_modules_installed_ok, item.name));
                     render();
                 });
@@ -208,6 +213,7 @@ public class RuntimeModulesDialog extends BaseAlertDialog implements RuntimeModu
         // Forget first so the host stops offering the capability even if the user cancels the
         // platform's confirmation screen.
         store().remove(item.id);
+        PlayerSetting.resetMpvAvailability();
         render();
         if (packageName == null) return;
         try {
