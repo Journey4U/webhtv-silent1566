@@ -161,12 +161,45 @@ public class RuntimeLoaderTest {
 
     @Test
     public void refusesToLoadAModuleThatIsNotInstalled() throws IOException {
-        RuntimeLoader loader = loader(libDir(LIB_BYTES), manifestJson(LIB_NAME, ""), true);
+        // "Not installed" means the platform reports no native library directory. A real directory
+        // with no registry record is a sideloaded module, which must load.
+        RuntimeLoader loader = loader(null, manifestJson(LIB_NAME, ""), true);
 
         RuntimeLoader.Outcome outcome = loader.load("sherpa", "arm64-v8a");
 
         assertFalse(outcome.isOk());
         assertTrue(outcome.getProblem(), outcome.getProblem().contains("模块未安装"));
+        assertTrue(loaded.isEmpty());
+    }
+
+    /**
+     * A module installed by another route has no registry record but is present on the device.
+     *
+     * <p>Rejecting it would make the engine appear available (availability asks the platform) and
+     * then fail at load time. The host must resolve the package from its own trusted table and
+     * verify the module's own manifest instead.
+     */
+    @Test
+    public void loadsASideloadedModuleThatHasNoRegistryRecord() throws IOException {
+        RuntimeLoader loader = loader(libDir(LIB_BYTES), manifestJson(LIB_NAME, ""), true);
+
+        RuntimeLoader.Outcome outcome = loader.load("sherpa", "arm64-v8a");
+
+        assertTrue(outcome.getProblem(), outcome.isOk());
+        assertEquals("sherpa", outcome.getEntry().id);
+        assertEquals("com.silent.runtime.sherpa", outcome.getEntry().packageName);
+        assertEquals(1, loaded.size());
+    }
+
+    /** An id the host does not know must still be refused, not guessed at. */
+    @Test
+    public void refusesAnUnknownModuleIdWithoutARecord() throws IOException {
+        RuntimeLoader loader = loader(libDir(LIB_BYTES), manifestJson(LIB_NAME, ""), true);
+
+        RuntimeLoader.Outcome outcome = loader.load("not-a-module", "arm64-v8a");
+
+        assertFalse(outcome.isOk());
+        assertTrue(outcome.getProblem(), outcome.getProblem().contains("未知模块"));
         assertTrue(loaded.isEmpty());
     }
 

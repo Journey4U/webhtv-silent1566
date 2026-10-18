@@ -167,7 +167,9 @@ public class RuntimeSherpaTest {
 
     @Test
     public void fallsBackToTheBundledLibraryWhenNoModuleIsInstalled() throws IOException {
-        RuntimeLoader loader = loader(libDir(LIB_BYTES), manifestJson());
+        // "Not installed" means the platform reports no native library directory. A real directory
+        // with no registry record is a sideloaded module, which is usable.
+        RuntimeLoader loader = loader(null, manifestJson());
 
         RuntimeSherpa.Status status = RuntimeSherpa.prepare(loader, "arm64-v8a", configurer(), bundled(true));
 
@@ -177,9 +179,21 @@ public class RuntimeSherpaTest {
         assertTrue("bundled path must not be configured", configured.isEmpty());
     }
 
+    /** A sideloaded module is usable even though the host never recorded an install. */
+    @Test
+    public void usesASideloadedModuleThatHasNoRegistryRecord() throws IOException {
+        RuntimeLoader loader = loader(libDir(LIB_BYTES), manifestJson());
+
+        RuntimeSherpa.Status status = RuntimeSherpa.prepare(loader, "arm64-v8a", configurer(), bundled(true));
+
+        assertEquals(RuntimeSherpa.Source.MODULE, status.getSource());
+        assertTrue(status.isFromModule());
+        assertEquals(1, configured.size());
+    }
+
     @Test
     public void reportsUnavailableWhenNeitherModuleNorBundledLibraryExists() throws IOException {
-        RuntimeLoader loader = loader(libDir(LIB_BYTES), manifestJson());
+        RuntimeLoader loader = loader(null, manifestJson());
 
         RuntimeSherpa.Status status = RuntimeSherpa.prepare(loader, "arm64-v8a", configurer(), bundled(false));
 
@@ -252,9 +266,9 @@ public class RuntimeSherpaTest {
 
     @Test
     public void treatsAnUnknownBundledProbeAsNotBundled() throws IOException {
-        // No module installed and no way to confirm a bundled library: fail closed with a clear
+        // No module present and no way to confirm a bundled library: fail closed with a clear
         // message rather than letting the SDK fail later with an opaque link error.
-        RuntimeLoader loader = loader(libDir(LIB_BYTES), manifestJson());
+        RuntimeLoader loader = loader(null, manifestJson());
 
         RuntimeSherpa.Status status = RuntimeSherpa.prepare(loader, "arm64-v8a", configurer(), null);
 

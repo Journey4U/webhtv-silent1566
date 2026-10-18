@@ -271,11 +271,25 @@ public class RuntimeMpvTest {
     public void refusesToLoadWhenTheModuleIsNotInstalled() throws IOException {
         File host = hostLibcxx();
 
-        RuntimeMpv.Status status = prepare(libDir(), host, manifestFor(host));
+        // "Not installed" means the platform reports no native library directory. A real directory
+        // with no registry record is a sideloaded module, which must load.
+        RuntimeMpv.Status status = prepare(null, host, manifestFor(host));
 
         assertFalse(status.isOk());
         assertTrue(status.getProblem(), status.getProblem().contains("未安装"));
         assertTrue(loadCalls.isEmpty());
+    }
+
+    /** A sideloaded module is usable even though the host never recorded an install. */
+    @Test
+    public void loadsASideloadedModuleThatHasNoRegistryRecord() throws IOException {
+        File host = hostLibcxx();
+
+        RuntimeMpv.Status status = prepare(libDir(), host, manifestFor(host));
+
+        assertTrue(status.getProblem(), status.isOk());
+        assertEquals(10, loadCalls.size());
+        assertEquals("libc++_shared.so", loadCalls.get(0));
     }
 
     @Test

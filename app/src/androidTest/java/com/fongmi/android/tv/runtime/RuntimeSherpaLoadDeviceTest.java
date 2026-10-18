@@ -141,14 +141,19 @@ public class RuntimeSherpaLoadDeviceTest {
                 !mapped.contains(HOST_PACKAGE));
     }
 
+    /**
+     * A module installed by another route has no registry record but is present on the device.
+     *
+     * <p>It must be used: availability asks the platform, so rejecting it here would make the
+     * feature appear available and then fail at load time.
+     */
     @Test
-    public void gateFallsBackToTheBundledLibraryWhenNoModuleIsRecorded() throws Exception {
+    public void gateUsesASideloadedModuleThatHasNoRegistryRecord() throws Exception {
         RuntimePlatform.PackageInfo packageInfo = RuntimeAndroid.packageInfo();
         assumeTrue("module " + MODULE_PACKAGE + " is not installed",
                 packageInfo.nativeLibraryDir(MODULE_PACKAGE) != null);
 
-        // An empty registry means "the user has not installed the module", even though the APK
-        // still bundles the library during the transition.
+        // An empty registry: the host never recorded an install for this module.
         RuntimeLoader loader = new RuntimeLoader(
                 new RuntimeStore(new MemoryStorage()), packageInfo, path -> {
         }, RuntimeAndroid.hostLibraries(), RuntimeAndroid.manifestSource());
@@ -158,12 +163,56 @@ public class RuntimeSherpaLoadDeviceTest {
                 loader, ABI, path -> {
                     configured.append(path);
                     System.setProperty(RuntimeSherpa.NATIVE_PATH_PROPERTY, path);
-                }, () -> new File(
-                        RuntimeAndroid.packageInfo().nativeLibraryDir(HOST_PACKAGE), LIBRARY).isFile());
+                }, () -> true);
+
+        assertEquals("a sideloaded module must be used: " + status.getProblem(),
+                RuntimeSherpa.Source.MODULE, status.getSource());
+        assertTrue(status.isFromModule());
+        assertEquals(status.getNativePath(), configured.toString());
+    }
+
+    /**
+     * With no module on the device, the gate falls back to the bundled library.
+     *
+     * <p>Uses a stub {@code PackageInfo} so the result does not depend on whether this particular
+     * device happens to have the module installed.
+     */
+    @Test
+    public void gateFallsBackToTheBundledLibraryWhenNoModuleIsPresent() {
+        RuntimePlatform.PackageInfo absent = new RuntimePlatform.PackageInfo() {
+            @Override
+            public File nativeLibraryDir(String packageName) {
+                return null;
+            }
+
+            @Override
+            public int versionCode(String packageName) {
+                return -1;
+            }
+
+            @Override
+            public File apkPath(String packageName) {
+                return null;
+            }
+
+            @Override
+            public String apkDigest(String packageName) {
+                return null;
+            }
+        };
+
+        RuntimeLoader loader = new RuntimeLoader(
+                new RuntimeStore(new MemoryStorage()), absent, path -> {
+        }, RuntimeAndroid.hostLibraries(), RuntimeAndroid.manifestSource());
+
+        StringBuilder configured = new StringBuilder();
+        RuntimeSherpa.Status status = RuntimeSherpa.prepare(
+                loader, ABI, path -> {
+                    configured.append(path);
+                    System.setProperty(RuntimeSherpa.NATIVE_PATH_PROPERTY, path);
+                }, () -> true);
 
         assertEquals(RuntimeSherpa.Source.BUNDLED, status.getSource());
         assertTrue("bundled path must not be configured", configured.toString().isEmpty());
-        assertEquals("the property must be left untouched", null,
-                System.getProperty(RuntimeSherpa.NATIVE_PATH_PROPERTY));
     }
 }

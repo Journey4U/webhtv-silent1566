@@ -128,6 +128,18 @@ android {
         packaging.jniLibs.excludes.add('**/libijkplayer.so')
     }
 
+    // The realtime-subtitle engine (sherpa-onnx) is delivered as an installable runtime module too.
+    //
+    // RuntimeSherpa points the SDK at the module via the sherpa_onnx.native.path property, and
+    // reports the feature unavailable when neither source exists, so removing the bundled copy
+    // degrades the feature rather than breaking the app.
+    //
+    // Pass -PsherpaBundle=true to restore the previous self-contained build.
+    def sherpaBundle = (project.findProperty('sherpaBundle') ?: 'false').toString().toBoolean()
+    if (!sherpaBundle) {
+        packaging.jniLibs.excludes.add('**/libsherpa-onnx-jni.so')
+    }
+
     signingConfigs {
         release {
             if (hasReleaseSigning) {

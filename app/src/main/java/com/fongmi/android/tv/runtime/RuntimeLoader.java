@@ -57,7 +57,7 @@ public final class RuntimeLoader {
      */
     public Outcome verify(String id, String expectedAbi) {
         RuntimeStore.Entry entry = store == null ? null : store.get(id);
-        if (entry == null) return Outcome.failure("模块未安装：" + id);
+        if (entry == null) return verifyInstalledWithoutRecord(id, expectedAbi);
         if (!entry.isValid()) return Outcome.failure("模块记录无效：" + id);
         if (!RuntimeCompatibility.isAccepted(entry.compatibilityId)) {
             return Outcome.failure("不支持的模块契约：" + entry.compatibilityId);
@@ -87,6 +87,60 @@ public final class RuntimeLoader {
             return Outcome.failure("模块入口库不存在：" + result.getEntryLibrary());
         }
         return Outcome.success(entry, libDir, manifest, entryLibrary);
+    }
+
+    /**
+     * Verifies a module the host has no install record for.
+     *
+     * <p>A module installed by any other route — sideload, a file manager, another app — is
+     * functional on the device but absent from the host's registry. Rejecting it would make the
+     * engine appear available (availability asks the platform) and then fail at load time, which is
+     * the worst of both. So the host resolves the package from its own trusted table and verifies
+     * the module's own manifest instead of a catalog comparison.
+     *
+     * <p>Provenance still comes from the platform: the APK signature was checked when it was
+     * installed. The manifest checks catch corruption and mismatched builds.
+     */
+    private Outcome verifyInstalledWithoutRecord(String id, String expectedAbi) {
+        String packageName = RuntimeCompatibility.packageName(id);
+        if (packageName == null) return Outcome.failure("未知模块：" + id);
+        if (packageInfo == null) return Outcome.failure("平台信息不可用");
+
+        File libDir = packageInfo.nativeLibraryDir(packageName);
+        if (libDir == null || !libDir.isDirectory()) {
+            return Outcome.failure("模块未安装：" + id);
+        }
+
+        RuntimeManifest manifest;
+        try {
+            manifest = readManifest(packageName);
+        } catch (IOException e) {
+            return Outcome.failure("无法读取模块清单：" + describe(e));
+        }
+        if (manifest == null) return Outcome.failure("模块缺少 " + MANIFEST_ASSET + " 清单");
+
+        RuntimeVerifier.Result result =
+                RuntimeVerifier.verifyInstalled(manifest, libDir, expectedAbi, hostLibraries);
+        if (!result.isOk()) return Outcome.failure(result.describe());
+
+        File entryLibrary = new File(libDir, RuntimeManifest.nativeLibraryEntry(result.getEntryLibrary(), manifest.abi));
+        if (!entryLibrary.isFile()) {
+            return Outcome.failure("模块入口库不存在：" + result.getEntryLibrary());
+        }
+
+        // Synthesize the entry the callers expect. The catalog digest is unknown for a module the
+        // host never installed, so it is left empty; nothing downstream re-checks it, because the
+        // per-file digests in the manifest were just verified above.
+        RuntimeStore.Entry synthesized = new RuntimeStore.Entry();
+        synthesized.id = manifest.module;
+        synthesized.packageName = packageName;
+        synthesized.versionCode = manifest.versionCode;
+        synthesized.versionName = manifest.versionName;
+        synthesized.compatibilityId = manifest.compatibilityId;
+        synthesized.abi = RuntimeAbi.normalize(manifest.abi);
+        synthesized.installedAtMs = 0L;
+
+        return Outcome.success(synthesized, libDir, manifest, entryLibrary);
     }
 
     /**

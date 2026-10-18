@@ -2,6 +2,7 @@ package com.fongmi.android.tv.runtime;
 
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -25,7 +26,26 @@ public final class RuntimeCompatibility {
             "ijk-jni-v1"
     )));
 
+    /**
+     * Module id -> the package name the host will load that module from.
+     *
+     * <p>Deliberately a literal host-side table, like {@link #ACCEPTED}: knowing which package
+     * provides a module is a host decision, not something a remote catalog may choose. It also lets
+     * the host load a module that was installed by some other route (sideload, file manager) and
+     * therefore has no entry in the host's install registry.
+     */
+    private static final Map<String, String> PACKAGES = Map.of(
+            "sherpa", "com.silent.runtime.sherpa",
+            "mpv", "com.silent.runtime.mpv",
+            "ijk", "com.silent.runtime.ijk"
+    );
+
     private RuntimeCompatibility() {
+    }
+
+    /** Returns the package name for a module id, or {@code null} when the id is unknown. */
+    public static String packageName(String id) {
+        return RuntimeText.isBlank(id) ? null : PACKAGES.get(id.trim());
     }
 
     public static Set<String> accepted() {

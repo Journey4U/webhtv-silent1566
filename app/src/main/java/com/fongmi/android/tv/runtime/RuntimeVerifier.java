@@ -58,6 +58,54 @@ public final class RuntimeVerifier {
     }
 
     /**
+     * Verifies an installed module that has no catalog entry to compare against.
+     *
+     * <p>Used when a module was installed by some other route — sideload, a file manager, another
+     * app — so the host never recorded a catalog artifact digest. The catalog comparison cannot run
+     * (there is nothing to compare against), but everything that protects the host still does:
+     *
+     * <ul>
+     *   <li>the manifest must be structurally valid, with an ABI this build supports and no path
+     *       traversal;
+     *   <li>its compatibility contract must be one this host build recognises;
+     *   <li>every declared file must match the digest the manifest declares for it;
+     *   <li>any host-provided library must match the declared digest.
+     * </ul>
+     *
+     * <p>The manifest travels inside the module APK, so these checks catch corruption and
+     * mismatched builds. They do not establish provenance: the platform's APK signature
+     * verification at install time is what does that.
+     */
+    public static Result verifyInstalled(
+            RuntimeManifest manifest,
+            File moduleRoot,
+            String expectedAbi,
+            HostLibraries hostLibraries) {
+
+        if (manifest == null) return Result.failure("module manifest is missing");
+        if (!manifest.isValid()) return Result.failure("module manifest is invalid");
+
+        String wanted = RuntimeAbi.normalize(expectedAbi);
+        if (!wanted.isEmpty() && !wanted.equals(RuntimeAbi.normalize(manifest.abi))) {
+            return Result.failure("abi mismatch: expected=" + wanted
+                    + " manifest=" + RuntimeAbi.normalize(manifest.abi));
+        }
+        if (!RuntimeCompatibility.isAccepted(manifest.compatibilityId)) {
+            return Result.failure("unsupported compatibility contract: " + manifest.compatibilityId);
+        }
+        if (moduleRoot == null || !moduleRoot.isDirectory()) {
+            return Result.failure("module directory is unavailable");
+        }
+
+        List<String> problems = new ArrayList<>();
+        verifyHostLibraries(manifest, hostLibraries, problems);
+        verifyFiles(manifest, moduleRoot, problems);
+        if (!problems.isEmpty()) return Result.failure(problems);
+
+        return Result.success(manifest.library);
+    }
+
+    /**
      * The catalog and the installed manifest must describe the same module. A mismatch means the
      * catalog moved on (or the APK was swapped) and loading it would run code the host did not
      * authorize.

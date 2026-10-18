@@ -196,10 +196,49 @@ public class RuntimeMpvDeviceTest {
         assertTrue(loadCalls.isEmpty());
     }
 
+    /**
+     * With no module on the device the gate reports it rather than throwing.
+     *
+     * <p>Uses a stub {@code PackageInfo} so the result does not depend on whether this particular
+     * device happens to have the module installed. An empty registry alone is not "absent": a
+     * module installed by another route has no record but is present and usable.
+     */
     @Test
     public void reportsNotInstalledInsteadOfThrowingWhenAbsent() {
-        RuntimeStore empty = new RuntimeStore(new MemoryStorage());
-        RuntimeMpv.Status status = prepare(empty);
+        RuntimePlatform.PackageInfo absent = new RuntimePlatform.PackageInfo() {
+            @Override
+            public File nativeLibraryDir(String packageName) {
+                return null;
+            }
+
+            @Override
+            public int versionCode(String packageName) {
+                return -1;
+            }
+
+            @Override
+            public File apkPath(String packageName) {
+                return null;
+            }
+
+            @Override
+            public String apkDigest(String packageName) {
+                return null;
+            }
+        };
+
+        // The loader carries the package probe used for verification, so the stub must be given to
+        // the loader — passing it to prepare alone would not change the outcome.
+        RuntimeLoader absentLoader = new RuntimeLoader(
+                new RuntimeStore(new MemoryStorage()), absent, path -> {
+        }, RuntimeAndroid.hostLibraries(), RuntimeAndroid.manifestSource());
+
+        RuntimeMpv.Status status = RuntimeMpv.prepare(
+                absentLoader,
+                absent,
+                name -> null,
+                path -> loadCalls.add(new File(path).getName()),
+                ABI);
 
         assertFalse(status.isOk());
         assertTrue(status.getProblem(), status.getProblem().contains("未安装"));
