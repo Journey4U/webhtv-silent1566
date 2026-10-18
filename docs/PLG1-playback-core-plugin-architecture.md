@@ -1077,7 +1077,52 @@ mpv 日志显示 `[vo/gpu/android:error] Missing surface pointer` ——
 > 附带观察：测试环境下解码回退到软件解码（`DR failed - disabling` → `Using software decoding`），
 > 这是没有 Surface 时的预期行为，不代表硬件解码有问题——硬解需要 Surface 参与。
 
-### 16.14 后续阶段
+### 16.14 S2-b 已交付（2026-10-18）：移除宿主 assets，收益兑现
+
+**范围**：默认构建不再打包 `assets/mpv-libs`，APK 真正瘦身。`-PmpvBundle=true` 保留为回滚路径。
+
+**改动**（`app/build.gradle`）：
+
+```groovy
+def mpvBundle = (project.findProperty('mpvBundle') ?: 'false').toString().toBoolean()
+if (!mpvBundle) {
+    androidResources.ignoreAssetsPatterns.add('mpv-libs')
+}
+```
+
+**实测体积**（同一 flavor、全量重打、完整性校验通过）：
+
+| 构建 | 体积 | `mpv-libs` 条目 |
+| --- | --- | --- |
+| `-PmpvBundle=true`（回滚路径） | 200,387,121 B (191.1 MB) | 10 |
+| **默认（已移除）** | **153,648,893 B (146.5 MB)** | **0** |
+| **减少** | **46,738,228 B (44.6 MB)** | |
+
+**踩到的两个坑（都值得记录）**：
+
+**1. `ignoreAssetsPatterns` 是只读 `ListProperty`**，Groovy 的 `+=` 会走 get-then-set 并报
+`Cannot set the value of read-only property`。必须用 `.add()` 原地修改。
+（先试的 `sourceSets.assets.filter.exclude` 完全无效——APK 里条目数不变。）
+
+**2. 体积一度看起来"没变"，是 Gradle 增量打包的假象。** 移除后 APK 仍报 194.5 MB，
+且 `mpv-libs` 条目已为 0。逐字节分析发现文件里有 **45.5 MB 空洞**：
+`sum(compress_size)` 只占文件 74.9%，而含 mpv 的版本占 97.8%。
+空洞起始处是 `PK` 本地文件头签名——即被删除条目的**残留旧数据**，
+Gradle 复用了旧 APK 而未截断。
+
+**必须删除 `app/build/outputs/apk/<variant>` 后全量重打**才能看到真实体积。
+若只看增量构建的结果，会得出"移除 assets 没有收益"的错误结论并放弃这一步。
+
+**验证**：
+
+- 两种开关均构建成功，`testzip()` 完整性 OK
+- 默认构建 `mpv-libs` 条目 = 0；`-PmpvBundle=true` = 10
+- 宿主单测 209 项全绿（runtime 139 / subtitle 70）
+
+**回滚路径**：`-PmpvBundle=true`。此外运行期仍有 assets 回退逻辑，
+且 `PlayerSetting.isMpvAvailable()` 在两者皆无时隐藏 MPV 内核。
+
+### 16.15 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -1094,7 +1139,7 @@ mpv 日志显示 `[vo/gpu/android:error] Missing surface pointer` ——
 | **S2-a** | 内核可用性接入模块（为移除 assets 铺路） | ✅ 已交付 |
 | **S2-b-前置** | mpv 模块功能验证（核心初始化 + 属性读取） | ✅ 已交付 |
 | **S2-c** | 真实播放回归（解复用 + H.264 解码 + 首帧输出） | ✅ 已交付 |
-| **S2-b** | 移除宿主 `assets/mpv-libs`（发布体积真正下降 37.5 MB） | 待做（前置已满足） |
+| **S2-b** | 移除宿主 `assets/mpv-libs` | ✅ 已交付（实测 -44.6 MB） |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
@@ -1103,14 +1148,15 @@ mpv 日志显示 `[vo/gpu/android:error] Missing surface pointer` ——
 > S2-a 已把内核可用性接到模块状态上，且 19 个既有调用点自动生效。
 >
 > **S2-b 前置全部满足**：
+>
 > 1. ✅ 契约层与安装/加载/校验（S0-a/S0-b）
 > 2. ✅ 9 库真实 dlopen 且映射来源正确、无 soname 冲突（S1-b）
 > 3. ✅ 内核可用性已接模块状态，19 个既有调用点自动生效（S2-a）
 > 4. ✅ 模块能初始化真实 mpv 核心并读出 `mpv-version`/`ffmpeg-version`（S2-b-前置）
 > 5. ✅ 真实媒体可解复用、H.264 解码成功并输出首帧（S2-c）
 >
-> **S2-b 实行注意**：保留构建开关（如 `-PmpvBundled=true`）以便回滚；
-> 移除后 APK 应减约 37.5 MB（assets/mpv-libs 的 APK 内占用）。
+> **S2-b 已完成**：默认构建不含 `assets/mpv-libs`，实测减少 **44.6 MB**；
+> 回滚用 `-PmpvBundle=true`。
 >
 > **仍未做**：带 Surface 的端到端播放（硬件解码 + Vulkan/OpenGL 渲染路径的实际输出），
 > 以及「装模块 → 内核选择器出现 MPV」「卸载 → 消失」的 UI 行为。这些属于 S0-h 范畴。

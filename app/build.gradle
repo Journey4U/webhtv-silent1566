@@ -88,9 +88,28 @@ android {
         unitTests.includeAndroidResources = true
     }
 
+    // MPV is delivered as an installable runtime module (see docs/PLG1-playback-core-plugin-architecture.md).
+    //
+    // The bundled copy is transitional. Excluding it by default removes ~37 MB of native libraries
+    // that most installs never load; users who want the engine install the module instead, and
+    // PlayerSetting.isMpvAvailable() already hides the kernel when neither source exists.
+    //
+    // Pass -PmpvBundle=true to restore the previous self-contained build. That switch is the
+    // rollback path and must keep working.
+    def mpvBundle = (project.findProperty('mpvBundle') ?: 'false').toString().toBoolean()
+
     // ASS rendering is part of normal builds; package the matching prebuilt ABI.
     sourceSets.main.jniLibs.srcDir(rootProject.file('third_party/exo-ass-native/prebuilt'))
     sourceSets.androidTest.assets.srcDir(files("$projectDir/schemas").files)
+
+    // Drop the bundled MPV libraries unless -PmpvBundle=true was passed.
+    //
+    // Uses ignoreAssetsPatterns.add() rather than += : the property is a read-only ListProperty on
+    // AGP 9.x, so Groovy's get-then-set form fails with "Cannot set the value of read-only
+    // property". Mutating the list in place is the supported path.
+    if (!mpvBundle) {
+        androidResources.ignoreAssetsPatterns.add('mpv-libs')
+    }
 
     signingConfigs {
         release {
