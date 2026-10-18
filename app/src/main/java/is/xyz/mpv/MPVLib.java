@@ -63,9 +63,62 @@ public final class MPVLib {
             com.fongmi.android.tv.player.NativeLibraryDiagnostics.failure("mpv-bundle", loadError);
             return false;
         }
+        Context app = context.getApplicationContext();
+
+        // Prefer an installed module. When one verifies, the host never touches the bundled
+        // assets, so a user who installed the module gets exactly that build.
+        try {
+            String abi = com.fongmi.android.tv.runtime.RuntimeAbi.resolve(
+                    com.fongmi.android.tv.BuildConfig.FLAVOR_abi, Build.SUPPORTED_ABIS);
+            com.fongmi.android.tv.runtime.RuntimeMpv.Status status = com.fongmi.android.tv.runtime.RuntimeMpv.prepare(
+                    com.fongmi.android.tv.runtime.RuntimeAndroid.loader(
+                            com.fongmi.android.tv.runtime.RuntimeAndroid.store()),
+                    com.fongmi.android.tv.runtime.RuntimeAndroid.packageInfo(),
+                    name -> hostLibrary(app, name),
+                    System::load,
+                    abi);
+            if (status.isOk()) {
+                loadedAbi = abi;
+                loaded = true;
+                com.fongmi.android.tv.player.NativeLibraryDiagnostics.request();
+                return true;
+            }
+            // A module that is simply absent must not be logged as an error; only a module that
+            // was found but rejected is worth reporting.
+            if (com.fongmi.android.tv.runtime.RuntimeAndroid.store().isInstalled(
+                    com.fongmi.android.tv.runtime.RuntimeMpv.MODULE_ID)) {
+                Log.w(TAG, "MPV module present but rejected: " + status.getProblem());
+            }
+        } catch (Throwable e) {
+            Log.w(TAG, "Unable to use the MPV module; falling back to bundled libraries", e);
+        }
+
+        return ensureLoadedFromAssets(app);
+    }
+
+    /**
+     * Resolves a library the host itself provides (e.g. {@code libc++_shared.so}).
+     *
+     * <p>Deliberately prefers the app's own {@code nativeLibraryDir}: that copy is loaded once per
+     * process and must be the one the module's libraries resolve against, or two copies collide on
+     * the same soname.
+     */
+    private static File hostLibrary(Context app, String name) {
+        try {
+            String dir = app.getApplicationInfo().nativeLibraryDir;
+            if (dir != null) {
+                File candidate = new File(dir, name);
+                if (candidate.isFile()) return candidate;
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    /** Extracts and loads the libraries bundled in the APK. */
+    private static boolean ensureLoadedFromAssets(Context app) {
         String loadingLibrary = "mpv-bundle";
         try {
-            Context app = context.getApplicationContext();
             String abi = chooseAbi(app.getAssets());
             if (abi == null) throw new UnsatisfiedLinkError("No bundled MPV native libraries for " + String.join(",", Build.SUPPORTED_ABIS));
             File root = app.getDir("mpv-libs", Context.MODE_PRIVATE);

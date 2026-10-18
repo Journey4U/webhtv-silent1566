@@ -90,21 +90,30 @@ public final class RuntimeLoader {
     }
 
     /**
-     * Verifies and loads the module's entry library.
+     * Verifies and loads the module's libraries, in the order the manifest declares.
      *
-     * <p>The library itself pulls in the rest of the module through its own {@code DT_NEEDED}
-     * entries, which is why the host only loads the declared entry point.
+     * <p>Loading order is part of the contract, not an implementation detail: the dynamic linker
+     * resolves each {@code DT_NEEDED} against what is already loaded, so a bundle whose libraries
+     * depend on each other (mpv is nine) fails if the order is wrong.
      */
     public Outcome load(String id, String expectedAbi) {
         Outcome outcome = verify(id, expectedAbi);
         if (!outcome.isOk()) return outcome;
         if (libraryLoader == null) return Outcome.failure("原生库加载器不可用");
-        try {
-            libraryLoader.load(outcome.getEntryLibrary().getAbsolutePath());
-        } catch (UnsatisfiedLinkError e) {
-            return Outcome.failure("模块原生库加载失败：" + describe(e));
-        } catch (RuntimeException e) {
-            return Outcome.failure("模块原生库加载异常：" + describe(e));
+        RuntimeManifest manifest = outcome.getManifest();
+        for (String declared : manifest.librariesToLoad()) {
+            String entry = RuntimeManifest.nativeLibraryEntry(declared, manifest.abi);
+            File file = new File(outcome.getLibraryDir(), entry);
+            if (!file.isFile()) {
+                return Outcome.failure("模块库不存在：" + declared);
+            }
+            try {
+                libraryLoader.load(file.getAbsolutePath());
+            } catch (UnsatisfiedLinkError e) {
+                return Outcome.failure("模块原生库加载失败（" + entry + "）：" + describe(e));
+            } catch (RuntimeException e) {
+                return Outcome.failure("模块原生库加载异常（" + entry + "）：" + describe(e));
+            }
         }
         return outcome;
     }

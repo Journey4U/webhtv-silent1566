@@ -883,7 +883,69 @@ SDK 在静态初始化时加载并**按进程缓存**结果，因此本测试类
 
 **验证**：宿主单测 192 项（runtime 122 / subtitle 70）+ 真机仪器化 16 项（模块 10 + 加载 2 + 仓库 4）全绿。
 
-### 16.9 后续阶段
+### 16.9 S1 已交付（2026-10-18）：mpv 播放核心模块化
+
+**范围**：把 mpv 的 9 个原生库移入模块，`libc++_shared.so` 留给宿主——这是本方案最关键、
+此前只在单测中验证过的约束（`hostLibraries`）首次在真机上被证明。
+
+**依赖图（`readelf -d` 实测，决定加载次序）**：
+
+```text
+libmvutil.so     -> (仅系统库)
+libmvcodec.so    -> libmwresample, libmvutil, libc++_shared
+libmpv.so        -> libmvcodec, libmvfilter, libmvformat, libmvutil,
+                    libc++_shared, libmwresample, libmwscale, libmvdevice
+libplayer.so     -> libmwscale, libmvcodec, libmpv, libc++_shared
+```
+
+`libc++_shared.so` 被 3 个库共同 `DT_NEEDED`，因此：
+**模块不得自带，宿主提供唯一一份，模块声明期望摘要。**
+
+**模块产物**：
+
+| ABI | 大小 | 库数 | 模块声明的宿主库摘要 |
+| --- | --- | --- | --- |
+| arm64-v8a | 45,376,556 B (43.3 MB) | 9 | `c4c2fe5c…` |
+| armeabi-v7a | 39,539,774 B (37.7 MB) | 9 | `af383654…` |
+
+**本轮发现并修复的真实缺陷**：
+
+**`hostLibraries` 摘要必须按 ABI 区分。** 宿主 arm64 与 v7a 的 `libc++_shared.so` 是**不同文件**
+（`c4c2fe5c…` / `af383654…`）。打包脚本最初硬编码了 arm64 的值，会让 v7a 模块在加载时被摘要门禁拒绝——
+而且是静默的：模块能装、能通过安装校验，只在真正加载时才失败。
+修复：`hostLibraries` 支持 `@derive:<path>{abi}`，从 WebHTV 检出按 ABI 推导，杜绝漂移。
+（真机确认宿主 `nativeLibraryDir/lib/arm64/libc++_shared.so` 的摘要正是 `c4c2fe5c…`。）
+
+**新增/修改**：
+
+| 文件 | 改动 |
+| --- | --- |
+| `runtime/RuntimeMpv.java`（新） | 先按 soname 加载宿主库，再按 manifest 顺序加载模块库 |
+| `runtime/RuntimeManifest.java` | 新增 `loadOrder`；`isValid` 要求每个待加载库都在 `files` 中（可被摘要校验） |
+| `runtime/RuntimeLoader.java` | 按 `loadOrder` 依次加载，而非只加载单入口 |
+| `is/xyz/mpv/MPVLib.java` | `ensureLoaded` 优先模块 → 回退 assets；抽出 `ensureLoadedFromAssets` |
+| `webhtv-plugins/scripts/build_module.py` | 支持多库模块、`loadOrder`、`@derive` 宿主摘要 |
+
+**加载次序即契约**：改由 manifest 的 `loadOrder` 显式声明，不再依赖 `DT_NEEDED` 隐式解析——
+显式次序可被校验，隐式不行。
+
+**验证**：
+
+| 项 | 结果 |
+| --- | --- |
+| 宿主单测 | **205 tests, 0 failures**（runtime 135 含新增 `RuntimeMpvTest` 13 / subtitle 70 无回归）|
+| **真机仪器化（mpv）** | **OK (9 tests)** @ `192.168.50.3:5555` |
+| 真机仪器化（其余） | 16 tests（模块 10 + 加载 2 + 仓库 4）|
+
+真机 9 项覆盖：模块暴露 9 库且**不自带** `libc++_shared.so`、宿主提供的库摘要与模块声明一致、
+对真实 `nativeLibraryDir` 校验通过、**宿主库最先加载且模块按序跟随（10 次加载）**、
+入口库落在真实文件、契约未知被拒、未安装不抛异常、`loadOrder` 首尾正确且不含宿主库、
+入口库 ELF 头可读。
+
+**过渡期保留回退**：宿主仍打包 `assets/mpv-libs`（10 个条目），模块缺失或校验失败时自动回退，
+因此本阶段不会让任何现有用户失去 mpv。移除 assets 是后续独立步骤。
+
+### 16.10 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -894,10 +956,15 @@ SDK 在静态初始化时加载并**按进程缓存**结果，因此本测试类
 | **S0-e** | 端到端验证 SDK 从模块目录加载 | ✅ 已交付 |
 | **S0-f** | 模块管理页（设置 → 增强功能 挂载）+ 卸载入口 | ✅ 已交付 |
 | **S0-g** | 推送 `webhtv-plugins` + 已发布产物端到端验证 | ✅ 已交付 |
-| **S0-h** | UI 侧安装联调（`PackageInstaller` 会话 + 播放页实时字幕端到端） | 待做 |
+| **S1** | mpv 播放核心模块化（9 库 + `hostLibraries` 契约） | ✅ 已交付 |
+| **S0-h** | UI 侧安装联调（`PackageInstaller` 会话 + 播放页端到端） | 待做 |
+| **S2** | 移除宿主 `assets/mpv-libs`（发布体积真正下降 37.5 MB） | 待做 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
+>
+> **S1 未做**：宿主仍打包 `assets/mpv-libs`，所以 APK 体积**尚未下降**。移除它是 S2 的独立步骤，
+> 且必须先确认模块化路径在真实播放场景下稳定（本次只验证了加载次序与摘要门禁，未做播放回归）。
 >
 > **S0-h 剩余项**（均需 UI 交互，坐标自动化在模拟器上不可靠）：
 >

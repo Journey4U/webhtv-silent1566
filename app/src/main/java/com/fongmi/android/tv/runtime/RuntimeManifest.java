@@ -48,6 +48,35 @@ public final class RuntimeManifest {
     public String library;
 
     /**
+     * Optional ordered list of manifest-relative libraries to load, in this exact order.
+     *
+     * <p>Modules that ship several interdependent libraries (the mpv bundle is nine) must control
+     * the load order: the dynamic linker resolves each {@code DT_NEEDED} against what is already
+     * loaded, so loading a dependent before its dependency fails. When absent the host loads
+     * {@link #library} alone.
+     *
+     * <p>Must not list any host-provided library: those are loaded by the host from its own
+     * directory, and a second copy collides on the soname.
+     */
+    @SerializedName("loadOrder")
+    public List<String> loadOrder;
+
+    public List<String> loadOrder() {
+        return loadOrder == null ? Collections.emptyList() : loadOrder;
+    }
+
+    /**
+     * Libraries the host must load, in order, before the module's own.
+     *
+     * <p>Returns the declared order when present; otherwise falls back to the single entry library
+     * so single-library modules need no extra declaration.
+     */
+    public List<String> librariesToLoad() {
+        List<String> declared = loadOrder();
+        return declared.isEmpty() ? Collections.singletonList(library) : declared;
+    }
+
+    /**
      * Libraries the module expects the <em>host</em> to provide, mapped to the digest the host
      * must match. A module must never ship its own copy: two copies of {@code libc++_shared.so}
      * collide on the same soname and break dynamic linking for every native consumer.
@@ -72,6 +101,11 @@ public final class RuntimeManifest {
         if (!RuntimeAbi.isSupported(abi)) return false;
         if (RuntimeText.isBlank(library) || library.startsWith("/") || library.contains("..")) return false;
         if (files().isEmpty()) return false;
+        for (String entry : loadOrder()) {
+            if (RuntimeText.isBlank(entry) || entry.startsWith("/") || entry.contains("..")) return false;
+            // Every library the host loads must be declared (and therefore digest-verified).
+            if (findFile(entry) == null) return false;
+        }
         for (RuntimeFile file : files()) {
             if (file == null || !file.isValid()) return false;
         }
