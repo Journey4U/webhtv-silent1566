@@ -1010,7 +1010,32 @@ mobile 与 leanback 两 flavor 均编译通过。
 > **仍未验证**：真机上「装模块 → 内核选择器出现 MPV」与「卸载 → 消失」的端到端 UI 行为，
 > 以及真实播放回归。这些留待 S0-h/S2-b。
 
-### 16.12 后续阶段
+### 16.12 S2-b-前置 已交付（2026-10-18）：mpv 模块功能验证
+
+**范围**：证明模块化的 mpv **功能可用**，而不只是能加载——移除 `assets/mpv-libs` 的最后一道保险。
+
+**为什么 dlopen 还不够**：`RuntimeMpvLoadDeviceTest` 已证明 9 个库能加载并映射自模块，但
+「库能加载」不等于「功能可用」。库里仍可能存在首次调用才暴露的问题。
+
+**新增** `app/src/androidTest/java/com/fongmi/android/tv/runtime/RuntimeMpvFunctionalDeviceTest.java`（3 项）。
+
+**真机结果**（`192.168.50.3:5555`）：**OK (3 tests)**，用时 1.78s
+
+| 断言 | 证据 |
+| --- | --- |
+| **模块能初始化真实 mpv 核心** | `MPVLib.tryCreate()` + `init()` 成功 |
+| **JNI 表面可解析且核心能应答** | `getPropertyString("mpv-version")` 返回非空版本串 |
+| **编解码栈可用** | `getPropertyString("ffmpeg-version")` 返回非空（ffmpeg 在模块内是独立库） |
+| 可用性判定报告 MPV 可用 | `PlayerSetting.isMpvAvailable()` 与 `isPlayerAvailable(MPV)` 均为 true |
+| `isBundled` 与实际打包一致 | 探针结论与直接读 assets 的结论相同 |
+
+`mpv-version` 只在核心运行起来后才可读，因此这个值本身就是「整条链功能可用」的证据。
+
+**过程中遇到的一个真实陷阱**：首轮测试报 `NoClassDefFoundError: RuntimeStore`——测试 APK 是新的，
+但设备上的宿主 APK 还是旧的。仪器化测试的类在宿主进程内运行，因此**每次改了宿主代码都必须重装宿主**，
+只装测试 APK 不够。这会导致「明明代码没问题却 NoClassDefFoundError」的困惑。
+
+### 16.13 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -1025,6 +1050,7 @@ mobile 与 leanback 两 flavor 均编译通过。
 | **S0-h** | UI 侧安装联调（`PackageInstaller` 会话 + 播放页端到端） | 待做 |
 | **S1-b** | mpv 真实 dlopen + `/proc/self/maps` 取证 | ✅ 已交付 |
 | **S2-a** | 内核可用性接入模块（为移除 assets 铺路） | ✅ 已交付 |
+| **S2-b-前置** | mpv 模块功能验证（核心初始化 + 属性读取） | ✅ 已交付 |
 | **S2-b** | 移除宿主 `assets/mpv-libs`（发布体积真正下降 37.5 MB） | 待做（前置已满足） |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
@@ -1033,8 +1059,15 @@ mobile 与 leanback 两 flavor 均编译通过。
 > **S2-b 前置条件已满足**：S1-b 证明 9 库能真实 dlopen 且映射来源正确；
 > S2-a 已把内核可用性接到模块状态上，且 19 个既有调用点自动生效。
 >
-> **S2-b 仍需注意**：移除 assets 后建议保留构建开关（如 `-PmpvBundled=true`）以便回滚，
-> 并做一次真实播放回归（对比 `player-engine` 日志的 hwdec/render 输出与移除前一致）。
+> **S2-b 前置全部满足**：
+> 1. ✅ 契约层与安装/加载/校验（S0-a/S0-b）
+> 2. ✅ 9 库真实 dlopen 且映射来源正确、无 soname 冲突（S1-b）
+> 3. ✅ 内核可用性已接模块状态，19 个既有调用点自动生效（S2-a）
+> 4. ✅ 模块能初始化真实 mpv 核心并读出 `mpv-version`/`ffmpeg-version`（S2-b-前置）
+>
+> **S2-b 实行注意**：保留构建开关（如 `-PmpvBundled=true`）以便回滚；
+> 移除后 APK 应减约 37.5 MB（assets/mpv-libs 的 APK 内占用）。
+> 真实视频播放回归仍未做（未对比 `player-engine` 日志的 hwdec/render 输出）。
 >
 > **S0-h 剩余项**（均需 UI 交互，坐标自动化在模拟器上不可靠）：
 >
