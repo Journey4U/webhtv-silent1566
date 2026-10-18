@@ -1035,7 +1035,49 @@ mobile 与 leanback 两 flavor 均编译通过。
 但设备上的宿主 APK 还是旧的。仪器化测试的类在宿主进程内运行，因此**每次改了宿主代码都必须重装宿主**，
 只装测试 APK 不够。这会导致「明明代码没问题却 NoClassDefFoundError」的困惑。
 
-### 16.13 后续阶段
+### 16.13 S2-c 已交付（2026-10-18）：真实播放回归
+
+**范围**：证明模块化 mpv 能**真实解码播放**，补齐移除 assets 前最后一项未验证的路径。
+
+**为什么还要这一步**：S2-b-前置证明了核心能初始化并读出属性，但那不经过解复用与解码。
+一个 bundle 可以核心正常、属性可读，却在真正解媒体时失败。
+
+**新增** `app/src/androidTest/java/com/fongmi/android/tv/runtime/RuntimeMpvPlaybackDeviceTest.java`（3 项）。
+
+**真机结果**（`192.168.50.3:5555`）：**OK (3 tests)**
+
+**mpv 自身日志（决定性证据）**：
+
+```text
+[demux:v]  Trying demuxers for level=normal.
+[vd:v]     Decoder format: 1080x1920 [0:1] yuv420p ... CL=mpeg2/4/h264
+[vf:v]     [in] 1080x1920 yuv420p bt.709/bt.709/bt.1886/limited/display
+[cplayer]  VO: [null] 1080x1920 yuv420p
+[cplayer]  first video frame after restart shown
+[cplayer]  playback restart complete ... video=playing
+```
+
+这证明整条链路走通：**解复用 → H.264 解码 → 滤镜链 → 首帧输出**。
+H.264 解码器位于模块内的 `libmvcodec.so`（ffmpeg），因此这条证据直接覆盖了模块最核心的能力。
+
+| 断言 | 结果 |
+| --- | --- |
+| 加载真实媒体文件并等到 `FILE_LOADED` | ✅ |
+| 解出视频尺寸 `width`/`height` 为正 | ✅ |
+| `duration` 可读 | ✅ |
+| 引擎使用的核心选项被接受（`hwdec`/`vo`/`video-sync`/`framedrop`） | ✅ |
+| 播放命令与属性可设置（`pause`） | ✅ |
+
+**测试方法上的一个关键修正**：首轮 `FILE_LOADED` 超时失败，但**不是模块缺陷**。
+mpv 日志显示 `[vo/gpu/android:error] Missing surface pointer` ——
+所有真实 `vo` 后端都需要 Android Surface，而测试没有附加（附加是播放器的职责）。
+改用 `vo=null`/`ao=null` 隔离「解复用+解码」与「输出面」两件事后通过。
+若不做这次日志诊断，很容易把测试方法问题误判为模块缺陷。
+
+> 附带观察：测试环境下解码回退到软件解码（`DR failed - disabling` → `Using software decoding`），
+> 这是没有 Surface 时的预期行为，不代表硬件解码有问题——硬解需要 Surface 参与。
+
+### 16.14 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -1051,6 +1093,7 @@ mobile 与 leanback 两 flavor 均编译通过。
 | **S1-b** | mpv 真实 dlopen + `/proc/self/maps` 取证 | ✅ 已交付 |
 | **S2-a** | 内核可用性接入模块（为移除 assets 铺路） | ✅ 已交付 |
 | **S2-b-前置** | mpv 模块功能验证（核心初始化 + 属性读取） | ✅ 已交付 |
+| **S2-c** | 真实播放回归（解复用 + H.264 解码 + 首帧输出） | ✅ 已交付 |
 | **S2-b** | 移除宿主 `assets/mpv-libs`（发布体积真正下降 37.5 MB） | 待做（前置已满足） |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
@@ -1064,10 +1107,13 @@ mobile 与 leanback 两 flavor 均编译通过。
 > 2. ✅ 9 库真实 dlopen 且映射来源正确、无 soname 冲突（S1-b）
 > 3. ✅ 内核可用性已接模块状态，19 个既有调用点自动生效（S2-a）
 > 4. ✅ 模块能初始化真实 mpv 核心并读出 `mpv-version`/`ffmpeg-version`（S2-b-前置）
+> 5. ✅ 真实媒体可解复用、H.264 解码成功并输出首帧（S2-c）
 >
 > **S2-b 实行注意**：保留构建开关（如 `-PmpvBundled=true`）以便回滚；
 > 移除后 APK 应减约 37.5 MB（assets/mpv-libs 的 APK 内占用）。
-> 真实视频播放回归仍未做（未对比 `player-engine` 日志的 hwdec/render 输出）。
+>
+> **仍未做**：带 Surface 的端到端播放（硬件解码 + Vulkan/OpenGL 渲染路径的实际输出），
+> 以及「装模块 → 内核选择器出现 MPV」「卸载 → 消失」的 UI 行为。这些属于 S0-h 范畴。
 >
 > **S0-h 剩余项**（均需 UI 交互，坐标自动化在模拟器上不可靠）：
 >
