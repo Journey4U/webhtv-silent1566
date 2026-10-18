@@ -1,10 +1,11 @@
 package com.fongmi.android.tv.runtime;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -203,8 +204,16 @@ public final class RuntimeLoader {
         return packageName -> {
             File file = new File(moduleRoot, "assets/" + MANIFEST_ASSET);
             if (!file.isFile()) return null;
-            try (InputStream in = Files.newInputStream(file.toPath())) {
-                return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            // Read with an explicit loop: InputStream.readAllBytes() is a Java 9 API that does not
+            // exist on the device runtimes this app supports, and core-library desugaring does not
+            // cover java.io. It compiles and passes on the JVM, then throws NoSuchMethodError on
+            // device, so the loop is not a stylistic choice.
+            try (InputStream in = new FileInputStream(file)) {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = in.read(buffer)) != -1) out.write(buffer, 0, read);
+                return out.toString(StandardCharsets.UTF_8.name());
             }
         };
     }

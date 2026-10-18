@@ -845,7 +845,45 @@ SDK 在静态初始化时加载并**按进程缓存**结果，因此本测试类
 3. **适配器点击回调失效** —— 初版在构造函数里绑监听并读 `view.getTag()`（从未设置，恒为 null），且 `onRemove(null)` 传了 null。改为每次 `onBindViewHolder` 绑定，并通过 `getBindingAdapterPosition()` 取当前项，避免回收行作用于错误条目。
 4. **`App.execute` 不存在** —— 应为 `Task.execute`；另有缺失的字符串资源与缺失的 `Color` import。
 
-### 16.8 后续阶段
+### 16.8 S0-g 已交付（2026-10-18）
+
+**范围**：推送模块仓库 + 对**已发布产物**做端到端验证。
+
+**仓库已推送**：
+
+| 项 | 值 |
+| --- | --- |
+| 仓库 | `https://github.com/Silent1566/webhtv-plugins` |
+| 分支 | `main`（本地原为 `master`，已改名以匹配 catalog URL 与 CI） |
+| 提交 | `9c41fb7bc3b7c5e9c4f422a066fecce2fcaa49e4` |
+| Release | tag `modules`，含 arm64-v8a 与 armeabi-v7a 两个产物 |
+| catalog URL | `https://raw.githubusercontent.com/Silent1566/webhtv-plugins/main/catalog.json`（HTTP 200） |
+
+**新增** `app/src/androidTest/java/com/fongmi/android/tv/runtime/RuntimeRepositoryDeviceTest.java`（4 项）。
+
+**为什么用仪器化测试而不是 UI 点击**：模块管理页的坐标导航在模拟器上不可靠（我实测多次误入 TMDB 详情页）。端到端测试直接调用生产路径，覆盖更广且可重复：
+
+| # | 断言 | 说明 |
+| --- | --- | --- |
+| 1 | 设备能拉取已发布 catalog | schema、模块存在、契约被宿主认可 |
+| 2 | catalog 提供本机 ABI 的产物 | 含 `minSdk` 过滤，HTTPS 校验 |
+| 3 | **下载产物摘要与 catalog 一致** | 走真实 `RuntimeAndroid.downloader()`；镜像篡改或上传截断会在此暴露 |
+| 4 | **产物声明与 catalog 一致，且库为 Stored** | 直接读下载 APK 的 `assets/runtime.json`，比对包名/契约/版本/ABI，并验证入口库的 `STORED`、大小、摘要 |
+
+**真机结果**（`192.168.50.3:5555`）：**OK (4 tests)**
+
+**本轮发现并修复的真实生产缺陷（Java 9 API 在设备上不存在）**：
+
+`RuntimeLoader.fileTreeSource()` 使用了 `InputStream.readAllBytes()`。这是 **Java 9 API，Android 设备运行时不存在**，且 `coreLibraryDesugaring`（`desugar_jdk_libs_nio` 2.1.5）**不覆盖 `java.io`**。
+
+- **为什么单测发现不了**：单测跑在 JDK 21 上，方法存在，一路绿灯。
+- **为什么生产未崩**：生产路径 `RuntimeAndroid.manifestSource()` 恰好用了手写循环，因此侥幸避开了；`fileTreeSource()` 这条路径会崩。
+- **修复**：改为显式循环读取，并在注释中写明这不是风格偏好。
+- 注意区分：`java.nio.file.Files.readAllBytes()`（Java 7，脱糖覆盖）是安全的；只有 `java.io.InputStream.readAllBytes()` 有问题。`RuntimeRepository:77` 用的是前者，无风险。
+
+**验证**：宿主单测 192 项（runtime 122 / subtitle 70）+ 真机仪器化 16 项（模块 10 + 加载 2 + 仓库 4）全绿。
+
+### 16.9 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -855,14 +893,20 @@ SDK 在静态初始化时加载并**按进程缓存**结果，因此本测试类
 | **S0-d** | 新仓库 `webhtv-plugins` 骨架 + 打包脚本 + CI + 真机验证 | ✅ 已交付（**待推送**） |
 | **S0-e** | 端到端验证 SDK 从模块目录加载 | ✅ 已交付 |
 | **S0-f** | 模块管理页（设置 → 增强功能 挂载）+ 卸载入口 | ✅ 已交付 |
-| **S0-g** | 推送 `webhtv-plugins` + 端到端安装联调（`PackageInstaller` 会话 + 播放页实时字幕） | 待做 |
+| **S0-g** | 推送 `webhtv-plugins` + 已发布产物端到端验证 | ✅ 已交付 |
+| **S0-h** | UI 侧安装联调（`PackageInstaller` 会话 + 播放页实时字幕端到端） | 待做 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
 >
-> **S0-g 必须完成**：把 `webhtv-plugins` 推送到 GitHub（需要账号权限），
-> 然后做端到端联调——在模块管理页真实安装 sherpa 模块（走 `PackageInstaller` 会话与用户确认），
-> 播放页开启实时字幕并确认 `realtime-subtitle` 日志为 `source=MODULE`，最后卸载并确认回退内置库。
+> **S0-h 剩余项**（均需 UI 交互，坐标自动化在模拟器上不可靠）：
+>
+> 1. 模块管理页里真实安装 sherpa（走 `PackageInstaller` 会话 + 用户确认对话框）
+> 2. 播放页开启实时字幕，确认 `realtime-subtitle` 日志为 `source=MODULE`
+> 3. 卸载模块后确认回退内置库
+>
+> 已通过仪器化测试证明的替代证据：产物可下载且摘要匹配、manifest 与 catalog 一致、
+> 库以 Stored 存放、门禁解析为 `Source.MODULE`、SDK 确实从模块目录 dlopen。
 >
 > 模拟器：`F:/Workspace/webhtv` → `192.168.50.3:5555`（arm64 native bridge 可用）。
 >
