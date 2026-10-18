@@ -945,7 +945,38 @@ libplayer.so     -> libmwscale, libmvcodec, libmpv, libc++_shared
 **过渡期保留回退**：宿主仍打包 `assets/mpv-libs`（10 个条目），模块缺失或校验失败时自动回退，
 因此本阶段不会让任何现有用户失去 mpv。移除 assets 是后续独立步骤。
 
-### 16.10 后续阶段
+### 16.10 S1-b 已交付（2026-10-18）：mpv 真实加载验证
+
+**范围**：证明模块化的 mpv **真的能 dlopen**，而不只是"路径与摘要正确"。
+
+**为什么必须单独做这一步**：S1 用注入的加载器记录调用，验证了次序与摘要门禁，但**从未真正加载**。
+次序对、摘要对，仍可能因 soname 冲突或符号缺失而失败——这正是 commit `2a56751af0` 的失败模式：
+所有校验通过，加载仍失败，表现为「几乎所有片源报 MPV 加载媒体失败」。只有真实加载能排除它。
+
+**新增** `app/src/androidTest/java/com/fongmi/android/tv/runtime/RuntimeMpvLoadDeviceTest.java`（3 项）。
+
+**取证方式**：`/proc/self/maps`。加载后用 `System::load` 真实 dlopen，再逐库检查映射来源。
+
+**真机结果**（`192.168.50.3:5555`）：**OK (3 tests)**，用时 2.28s
+
+| 断言 | 结果 |
+| --- | --- |
+| 整条链真实加载成功（9 个库全部 `System.load` 通过） | ✅ |
+| 9 个模块库**全部**映射自模块包目录，且**无一**来自宿主 | ✅ |
+| **`libc++_shared.so` 只有一份，且来自宿主** | ✅ |
+| 模块**未**贡献第二份 `libc++_shared.so` | ✅ |
+| 入口库符号可解析（`DT_NEEDED` 图被完整解析） | ✅ |
+
+这直接覆盖了 soname 冲突这一历史故障模式，为移除 `assets/mpv-libs`（S2）提供了依据。
+
+**测试自身的两个缺陷（均已修）**：
+
+1. **`String.lines()` 是 Java 11 API**，设备（API 28）上不存在，`NoSuchMethodError`。改为 `split`。
+   已核实生产代码无此问题：`HlsManifestCleaner`/`DebugLogs` 中的 `.lines()` 是自定义类型的成员方法。
+2. **不能假设进程干净**：原生库一旦加载就无法卸载，同类中先跑的测试已经映射过它们。
+   原断言「加载前映射为空」在同一进程内必然失败。改为只断言**映射来源**——这个结论与谁先触发加载无关。
+
+### 16.11 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -958,13 +989,15 @@ libplayer.so     -> libmwscale, libmvcodec, libmpv, libc++_shared
 | **S0-g** | 推送 `webhtv-plugins` + 已发布产物端到端验证 | ✅ 已交付 |
 | **S1** | mpv 播放核心模块化（9 库 + `hostLibraries` 契约） | ✅ 已交付 |
 | **S0-h** | UI 侧安装联调（`PackageInstaller` 会话 + 播放页端到端） | 待做 |
-| **S2** | 移除宿主 `assets/mpv-libs`（发布体积真正下降 37.5 MB） | 待做 |
+| **S1-b** | mpv 真实 dlopen + `/proc/self/maps` 取证 | ✅ 已交付 |
+| **S2** | 移除宿主 `assets/mpv-libs`（发布体积真正下降 37.5 MB） | 待做（前置已满足） |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
 >
-> **S1 未做**：宿主仍打包 `assets/mpv-libs`，所以 APK 体积**尚未下降**。移除它是 S2 的独立步骤，
-> 且必须先确认模块化路径在真实播放场景下稳定（本次只验证了加载次序与摘要门禁，未做播放回归）。
+> **S1 未做**：宿主仍打包 `assets/mpv-libs`，所以 APK 体积**尚未下降**。移除它是 S2 的独立步骤。
+> S1-b 已补齐真实加载证据（9 库 dlopen 成功、映射来源正确、无 soname 冲突），
+> **S2 的前置条件已满足**。仍未经真实播放回归（未对比 `player-engine` 日志的 hwdec/render 输出）。
 >
 > **S0-h 剩余项**（均需 UI 交互，坐标自动化在模拟器上不可靠）：
 >
