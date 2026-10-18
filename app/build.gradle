@@ -111,6 +111,23 @@ android {
         androidResources.ignoreAssetsPatterns.add('mpv-libs')
     }
 
+    // IJK is delivered as an installable runtime module too.
+    //
+    // Its libraries live in the shared jniLibs source set, so they are excluded from packaging
+    // rather than from assets. PlayerSetting.isIjkAvailable() already hides the kernel when
+    // neither source exists, and RuntimeIjk installs a resolver so a module-delivered copy is
+    // found despite IJK loading by bare name.
+    //
+    // Pass -PijkBundle=true to restore the previous self-contained build.
+    def ijkBundle = (project.findProperty('ijkBundle') ?: 'false').toString().toBoolean()
+    if (!ijkBundle) {
+        // add() rather than += : on AGP 9.x the collection is a read-only ListProperty, so the
+        // get-then-set form fails with "Cannot set the value of read-only property".
+        packaging.jniLibs.excludes.add('**/libijkffmpeg.so')
+        packaging.jniLibs.excludes.add('**/libijksdl.so')
+        packaging.jniLibs.excludes.add('**/libijkplayer.so')
+    }
+
     signingConfigs {
         release {
             if (hasReleaseSigning) {

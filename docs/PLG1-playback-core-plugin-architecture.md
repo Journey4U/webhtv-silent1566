@@ -1279,7 +1279,41 @@ libijkplayer.so -> libijkffmpeg, libijksdl + 系统库
 仪器化测试的类跑在宿主进程内，**改了宿主代码必须重装宿主**。
 这个坑在 S2-b-前置已记录过一次，这次仍复现，说明它足够容易忘。
 
-### 16.18 后续阶段
+### 16.18 S3-b 已交付（2026-10-19）：移除宿主 IJK 库，收益兑现
+
+**范围**：默认构建不再打包 IJK 的三个原生库。`-PijkBundle=true` 保留为回滚路径。
+
+**改动**（`app/build.gradle`）：IJK 的库在共享 `jniLibs` 源集里（与 MPV 的 flavor assets
+不同），所以从**打包阶段**排除而非资源阶段：
+
+```groovy
+def ijkBundle = (project.findProperty('ijkBundle') ?: 'false').toString().toBoolean()
+if (!ijkBundle) {
+    packaging.jniLibs.excludes.add('**/libijkffmpeg.so')
+    packaging.jniLibs.excludes.add('**/libijksdl.so')
+    packaging.jniLibs.excludes.add('**/libijkplayer.so')
+}
+```
+
+同样用 `add()` 而非 `+=`：AGP 9.x 上是只读 `ListProperty`，get-then-set 会报
+`Cannot set the value of read-only property`（S2-b 已踩过）。
+
+**实测体积**（同一 flavor、全量重打、完整性校验通过）：
+
+| 构建 | 体积 | `libijk*` 条目 |
+| --- | --- | --- |
+| `-PijkBundle=true`（回滚路径） | 153,648,897 B (146.5 MB) | 3 |
+| **默认（已移除）** | **143,310,371 B (136.7 MB)** | **0** |
+| **减少** | **10,338,526 B (9.9 MB)** | |
+
+**决定性验证**：设备装上**不含 ijk 库**的 APK（`unzip -l` 确认条目 = 0）后，
+`RuntimeIjkDeviceTest` 仍然 **OK (6 tests)** ——
+三库真实加载且映射自模块目录（`/proc/self/maps` 取证）。
+这证明移除宿主库是安全的：模块路径不依赖宿主副本。
+
+**验证**：宿主单测 **222 tests, 0 failures**（runtime 152 / subtitle 70）。
+
+### 16.19 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -1299,6 +1333,7 @@ libijkplayer.so -> libijkffmpeg, libijksdl + 系统库
 | **S2-b** | 移除宿主 `assets/mpv-libs` | ✅ 已交付（实测 -44.6 MB） |
 | **S2-d** | 可用性改查平台（修复侧载模块不可用）+ S2-b 设备回归 | ✅ 已交付 |
 | **S3** | IJK 内核模块化（3 库 + resolver 注入） | ✅ 已交付 |
+| **S3-b** | 移除宿主 IJK 库 | ✅ 已交付（实测 -9.9 MB） |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
