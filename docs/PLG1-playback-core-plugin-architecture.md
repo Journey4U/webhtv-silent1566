@@ -2215,7 +2215,69 @@ if (!dv5Bundle) {
 
 **累计真机验证**：74 项（本阶段为构建期实测，不增加真机项）。
 
-### 16.33 后续阶段
+### 16.33 S17 已交付（2026-10-19）：forcetech 资产为死重量，3.7 MB 可移除
+
+**范围**：重新审查 S7 划定的「协议提取器不可模块化」边界时，发现其中一项与模块化无关的
+**独立问题**——`assets/libmitv.so`（3.7 MB）在 arm64 构建里**根本无法加载**。
+
+**S7 的结论仍然成立**（厂商代码按裸名加载 → 不能模块化）。本阶段发现的是**另一个问题**：
+该资产不是「能不能模块化」，而是「**它有没有用**」。
+
+**加载链（反汇编实证，非推测）**：
+
+```text
+Force.java（仓库内源码）
+  -> Util.intent(context, scheme)          把 scheme 作为 "scheme" extra
+  -> PxPService.onBind()                   取出 extra 传给 ForceTV.start(String, int)
+  -> com.forcetech.android.ForceTV.start(String lib, int port)
+       System.loadLibrary(lib)             ← 裸名，库名运行时传入
+  -> com.gsoft.mitv.MainActivity.<init>()
+       checkLibrary()                      Asset.open("libmitv.so") -> Path.copy -> Path.cache()
+       System.loadLibrary("mitv")          ← 从 nativeLibraryDir 找，不是 cacheDir
+```
+
+**决定性证据（`RuntimeForcetechCacheCopyDeviceTest`，真机 OK (3 tests)）**：
+
+```text
+bareName=mitv outcome=failed: UnsatisfiedLinkError cacheCopyMapped=false cacheCopySize=3745900
+asset=libmitv.so size=3745900 elfClass=1 machine=0x28 process64=true
+```
+
+即：复现厂商自己的流程（把资产拷到 `getCacheDir()`，再按裸名加载）后——
+
+1. `System.loadLibrary("mitv")` **抛 `UnsatisfiedLinkError`**；
+2. 拷贝出的副本**从未被映射**（`cacheCopyMapped=false`）。
+
+**两条独立原因**（任一条都足以使该资产无用）：
+
+| 原因 | 证据 |
+| --- | --- |
+| **架构不匹配** | 资产是 32 位 ARM（`elfClass=1 machine=0x28`），arm64 构建的进程是 64 位 |
+| **位置不在搜索路径** | `loadLibrary` 只查 `nativeLibraryDir` 与系统路径；`cacheDir` 不在其中（与 S7 测得的同一机制） |
+
+**ABI 对比（实测两个构建）**：
+
+| 构建 | `lib/` 中的 mitv | `assets/libmitv.so` | 结论 |
+| --- | --- | --- | --- |
+| **arm64** | **无** | 3.7 MB（32 位） | 无法加载 |
+| **v7a** | `lib/armeabi-v7a/libmitv.so`（54,548 B，32 位） | 3.7 MB（32 位） | `loadLibrary` 命中 **jni 版本**，assets 版本仍无用 |
+
+两个 `libmitv.so` **哈希不同**（`e0fed3b5…` 54 KB vs `db429e31…` 3.7 MB）：
+jni 版本才是被加载的那个，assets 版本只是每次 Service 启动都白拷一次。
+
+**收益**：3.7 MB——大于候选清单里的 quickjs（1.3 MB）与 tflite（3.5 MB），
+且**不需要模块化**（无需模块体系、无 `hostLibraries`、无降级设计）。
+
+**与 S7 的关系**：S7 回答「这些库能否移出 APK 由模块提供」（否）；
+本阶段回答「这个资产是否被使用」（否）。两者不冲突，且后者收益可直接落地。
+
+**建议**：移除 `assets/libmitv.so`。因涉及裁剪第三方 AAR 内容，属兼容性变更，
+需 §7 设计门禁与用户批准后实施；实施时应按 ABI 条件化（仅 arm64 构建排除，
+v7a 保持现状——v7a 的 assets 版本虽也无用，但未逐一实测，不冒险）。
+
+**累计真机验证**：77 项。
+
+### 16.34 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -2250,6 +2312,7 @@ if (!dv5Bundle) {
 | **S14** | DV5 渲染器降级验证（发现更大可拆项） | ✅ 已交付 |
 | **S15** | DV5 模块化设计门禁（待批准） | ⏸ 待批准 |
 | **S16** | CMake 产物排除实测（解决 S15 未决点） | ✅ 已交付 |
+| **S17** | forcetech 资产死重量取证（3.7 MB 可移除） | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
