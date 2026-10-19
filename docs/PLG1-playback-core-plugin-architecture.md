@@ -1995,7 +1995,191 @@ hostShipsLibrary=true probeAvailable=false
 
 **累计真机验证**：74 项。
 
-### 16.31 后续阶段
+### 16.31 S15 设计门禁（2026-10-19）：DV5 渲染器模块化实施方案
+
+> 本节是 `AGENTS.md` §7 要求的实施前门禁产物。**在获得明确批准前不得实施。**
+
+#### 16.31.1 要实现的实际能力
+
+把 `libexo_dovi_renderer.so`（9.26 MiB，剩余最大单项）从默认 APK 移入可选模块。
+
+**用户可见效果**：
+
+| 状态 | 效果 |
+| --- | --- |
+| 未装模块 | 杜比视界 **Profile 5** 片源走既有降级路径（`CODEC_TONE_MAP` / `LEGACY_HDR10_FALLBACK`），**仍可播放**，只是失去 GPU 映射路径 |
+| 装模块 | 与现在完全一致：DV5 片源可用 GPU 映射（Vulkan + AImageReader + libplacebo） |
+
+**这是可选增强而非核心能力**：`ExoDv5GpuMappingPolicy.decide()` 在 GPU 路径不可用时
+已有多条降级路线，且 `ExoUtil` 用 `catch (Throwable ignored)` 包裹创建调用。
+S14 已真机验证该降级链有效。
+
+#### 16.31.2 当前项目已有实现
+
+| 位置 | 现状 |
+| --- | --- |
+| `app/src/main/cpp/exo_dovi_renderer.cpp` | 1251 行，仓库内源码 |
+| `app/src/main/cpp/CMakeLists.txt` | `add_library(exo_dovi_renderer SHARED …)`，静态链接 libplacebo/shaderc/libdovi |
+| `ExoDv5Native.java` | 仓库内源码；`loadLibrary()` 用**裸名** `System.loadLibrary("exo_dovi_renderer")`，`catch Throwable` 返回 `LoadResult` |
+| `ExoDv5Native.probe()` | 能力探测（6 项 capability 位），返回 `Probe` 而非抛异常 |
+| `ExoDv5GpuRendererFactory.shouldCreate()` | 门禁：`probe.available()` 为 false 则不创建 |
+| `ExoUtil.java:1144-1157` | `catch (Throwable ignored)` 后**无条件**添加标准渲染器 |
+| `ExoDv5GpuMappingPolicy` | 降级路线：`NATIVE_DOLBY_VISION` → `CODEC_TONE_MAP` → `GPU_MAPPING` → `LEGACY_HDR10_FALLBACK` |
+
+**引用面**：`ExoDv5Native` 共 40 处引用，集中在 5 个文件（`ExoDv5GpuRenderer`、
+`ExoDv5GpuRendererFactory`、`ExoDv5Native`、`ExoDv5VideoSink` + 1 个单测），
+无跨模块泄漏。
+
+#### 16.31.3 涉及仓库及完整 commit ID
+
+| 仓库 | 版本 | 说明 |
+| --- | --- | --- |
+| WebHTV（本仓库） | `d7e0dde8ee1a73c2e6038487981b5da512f22a6d` | 宿主侧改动 |
+| `Silent1566/webhtv-plugins` | `a00fb34` | 新增 `dv5` 模块定义与产物 |
+| libplacebo / shaderc / libdovi | 见 `third_party/exo-dv5-native/prebuilt` | **静态链接进库**，不单独打包 |
+
+#### 16.31.4 最佳实践研究（证据）
+
+| 来源 | 版本/日期 | 证据等级 | 支持的论断 | 对 WebHTV 的适用性 |
+| --- | --- | --- | --- | --- |
+| `readelf -d`（本仓库实测） | 2026-10-19 | 一手实测 | 只依赖系统库：`libandroid`/`liblog`/`libmediandk`/`libvulkan`/`libdl`/`libm`/`libc`；**有 SONAME** | **直接适用**：无需 `hostLibraries`；无 S10/S12 类风险 |
+| WebHTV 实测 S14 | 2026-10-19 | 本仓库真机证据 | 降级链有效：库存在但 probe 报不可用（模拟器缺 Vulkan）时**返回结果而非抛异常** | **直接适用**：模块化前提已满足 |
+| WebHTV 实测 S7 | 2026-10-19 | 本仓库真机证据 | 裸名查找在模块目录不可见，须注入 resolver | **直接适用**：`ExoDv5Native` 是仓库内源码，可注入 |
+| WebHTV 实测 S2-d | 2026-10-19 | 本仓库真机证据 | 可用性查平台（`nativeLibraryDir != null`）而非注册表，侧载模块也真实可用 | **直接适用**：沿用同一模式 |
+| Android 官方 `packaging.jniLibs.excludes` | AGP 9.x | 官方文档 | 按路径模式排除打包的 `.so` | **需实施时验证**：本库由 CMake 产出而非 jniLibs 源集，排除是否生效须实测 |
+| libplacebo 官方文档 | — | — | 静态链接时须定义 `PL_STATIC` | 已在 CMakeLists 中，无需改动 |
+
+**未能取得的证据**：上游 `FongMi/Release` 无 DV5 GPU 渲染器模块（该库是 WebHTV 自研），
+故无上游对应实现可参照。本方案基于本仓库实测证据。
+
+#### 16.31.5 方案对比
+
+| 方案 | 做法 | 判定 |
+| --- | --- | --- |
+| **A. 不改** | 保持 9.26 MiB 内嵌 | 可行但放弃收益 |
+| **B. 拆成独立模块（推荐）** | 库移入模块；`ExoDv5Native` 注入 resolver 指向模块目录；未装则 probe 报不可用 | **采用** |
+| C. 改为运行时下载到 `filesDir` | 不走模块体系 | **否决**：绕过签名校验与摘要校验，等于新增 RCE 路径（与 §3 否决 `lab` 同因） |
+| D. 从 CMake 中移除并依赖预编译 | 改为预编译 AAR | **否决**：无收益，且失去源码可重建性 |
+
+#### 16.31.6 推荐方案（B）的设计
+
+**1. 契约（模块侧 `assets/runtime.json`）**
+
+```json
+{
+  "module": "dv5",
+  "packageName": "com.silent.runtime.dv5",
+  "compatibilityId": "exo-dv5-renderer-v1",
+  "library": "lib/arm64-v8a/libexo_dovi_renderer.so",
+  "loadOrder": ["lib/arm64-v8a/libexo_dovi_renderer.so"],
+  "hostLibraries": {},
+  "files": [{"path": "lib/arm64-v8a/libexo_dovi_renderer.so", "size": 9708848, "sha256": "…"}]
+}
+```
+
+`hostLibraries` 为空（实测只依赖系统库）；`loadOrder` 单元素（无模块内互相依赖）。
+
+**2. 新增 `RuntimeDv5`（复用 `RuntimeIjk` 模式）**
+
+```java
+public final class RuntimeDv5 {
+    public static final String MODULE_ID = "dv5";
+    public static final String MODULE_PACKAGE = "com.silent.runtime.dv5";
+    public static final String LIBRARY = "exo_dovi_renderer";
+
+    public static boolean isModuleInstalled(RuntimePlatform.PackageInfo p);
+    public static Status install(RuntimePlatform.PackageInfo p);   // 注入 resolver
+    public static void uninstall();
+}
+```
+
+**3. `ExoDv5Native` 改造**
+
+```java
+// 现状：System.loadLibrary("exo_dovi_renderer");
+// 改为：先问模块，再回退裸名（内嵌态），都失败则 LoadResult(false, …)
+```
+
+与 `IjkLibLoader` 的 resolver 模式一致：**每次查找都重新检查模块**，
+使「装模块」与「开始播放」的先后顺序无关；失败返回 `LoadResult` 而非抛异常，
+保持既有降级语义。
+
+**4. `App.onCreate` 接入**
+
+在现有 `RuntimeIjk.install(...)` 旁增加 `RuntimeDv5.install(...)`。
+
+**5. 排除打包**
+
+```groovy
+def dv5Bundle = (project.findProperty('dv5Bundle') ?: 'false').toString().toBoolean()
+if (!dv5Bundle) {
+    packaging.jniLibs.excludes.add('**/libexo_dovi_renderer.so')
+}
+```
+
+**关键未决点**：该库由 CMake 产出，`packaging.jniLibs.excludes` 是否对它生效
+**必须在实施时实测**。若不生效，备选是在 CMake 中按开关条件化
+（`if(NOT DEFINED DV5_BUNDLE)` + `add_library` 条件化），或在 `sourceSets` 层面排除。
+这是本阶段唯一的实施风险点。
+
+#### 16.31.7 缺点与风险
+
+| 风险 | 说明 | 缓解 |
+| --- | --- | --- |
+| 排除方式未验证 | CMake 产物可能不受 `packaging.jniLibs.excludes` 影响 | 实施第一步即实测；备选 CMake 条件化 |
+| DV5 用户失去 GPU 路径 | 未装模块的 DV5 片源降级到 `CODEC_TONE_MAP`/`HDR10` | 这是**既有降级路径**，非新缺陷；给模块引导 |
+| 模拟器无法验证正向路径 | 模拟器缺 Vulkan 1.2/AImageReader，probe 恒为 false | 正向验证需真机；模拟器只能验证降级与加载来源 |
+| 模块体积 | 9.26 MiB（arm64） | 与宿主净减相当 |
+| 与 `libdovi_android.so` 的关系 | 后者来自第三方 AAR `exoplayerhdrutils-0.4.0`（446 KB，DV7 用），**不是**本模块目标 | 明确区分，不混入 |
+
+#### 16.31.8 与现有功能的关系
+
+| 功能 | 影响 |
+| --- | --- |
+| EXO 普通播放 | **不受影响** |
+| DV7 处理（`libdovi_android.so`） | **不受影响**（不同库） |
+| DV5 原生杜比视界显示 | **不受影响**（走 `NATIVE_DOLBY_VISION`，不用本库） |
+| DV5 GPU 映射 | 需装模块；未装则降级 |
+| ASS 字幕（`libexo_ass.so`） | **不受影响** |
+| MPV / IJK / sherpa / Python | **不受影响** |
+
+#### 16.31.9 最小实施步骤
+
+| 步 | 内容 | 验证 |
+| --- | --- | --- |
+| 1 | 实测 `packaging.jniLibs.excludes` 对 CMake 产物是否生效 | 体积实测（决定性） |
+| 2 | 新增 `RuntimeDv5` + 单测 | 单测 |
+| 3 | `ExoDv5Native.loadLibrary()` 接模块 resolver | 真机：`/proc/self/maps` 来源 |
+| 4 | `App.onCreate` 接入 | 真机 |
+| 5 | 插件仓库新增 `dv5` 模块 + 产物（2 ABI） | 摘要一致 |
+| 6 | 端到端：装模块 → probe 可用；卸载 → 降级不崩 | 真机 |
+
+#### 16.31.10 预计需要的验证
+
+| 项 | 判据 |
+| --- | --- |
+| 排除生效 | APK 中无 `libexo_dovi_renderer.so`；体积净减约 9.26 MiB |
+| 未装模块 | probe 返回不可用（非抛异常）；DV5 片源走降级路径可播 |
+| 装模块 | 库从模块目录加载（`/proc/self/maps`）；probe 在支持设备上可用 |
+| 回滚开关 | `-Pdv5Bundle=true` 恢复内嵌 |
+| 既有单测 | runtime 156 项 + `ExoDv5GpuRendererTest` 全绿 |
+| 模块产物 | 2 ABI 产物生成且摘要与 catalog 一致 |
+
+#### 16.31.11 回滚路径
+
+| 层级 | 手段 |
+| --- | --- |
+| 构建期 | `-Pdv5Bundle=true` 恢复内嵌 |
+| 运行期 | 模块缺失 → probe 不可用 → 既有降级路径（S14 已验证） |
+| 发布期 | `recovery/PLG1-S15/<timestamp>` 标签 |
+| 数据期 | 卸载模块不影响播放配置 |
+
+**建议：实施（方案 B）。** 收益 9.26 MiB，风险显著低于 Python 模块化
+（无 `hostLibraries`、有 SONAME、降级链已真机验证）。
+唯一未决点是 CMake 产物的排除方式，实施第一步即可判定。
+**等待用户明确批准。**
+
+### 16.32 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -2028,6 +2212,7 @@ hostShipsLibrary=true probeAvailable=false
 | **S12** | Python 加载次序实验（契约须拓扑排序） | ✅ 已交付 |
 | **S13** | Python 模块化设计门禁（待批准） | ⏸ 待批准 |
 | **S14** | DV5 渲染器降级验证（发现更大可拆项） | ✅ 已交付 |
+| **S15** | DV5 模块化设计门禁（待批准） | ⏸ 待批准 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
