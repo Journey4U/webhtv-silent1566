@@ -2639,7 +2639,92 @@ ijk/mpv/sherpa）。若此时排除，用户会失去 DV5 能力却无处可装�
 
 **累计真机验证**：runtime 包 78 项全绿。
 
-### 16.39 后续阶段
+### 16.39 S23 已交付（2026-10-19）：DV5 构建期排除 + 正向路径验证
+
+**范围**：产物已就绪（插件仓库 `972d606`）后，实施宿主侧构建期排除，
+并完成正向路径（装模块）与降级路径（未装模块）的双向验证。
+
+#### 16.39.1 实施
+
+`app/build.gradle` 加排除，带回滚开关：
+
+```groovy
+def dv5Bundle = (project.findProperty('dv5Bundle') ?: 'false').toString().toBoolean()
+if (!dv5Bundle) {
+    packaging.jniLibs.excludes.add('**/libexo_dovi_renderer.so')
+}
+```
+
+S16 已实测 `packaging.jniLibs.excludes` 对 **CMake 产物**同样生效。
+
+#### 16.39.2 体积实测（全量重打，A/B 对比）
+
+| 构建 | 含 DV5 | 排除 DV5 | 差值 |
+| --- | --- | --- | --- |
+| arm64 | 115,206,636 B | 105,497,770 B | **9,708,866 B** |
+| v7a | — | 95,788,069 B（原 105.5 MB 级） | 同量级 |
+
+**差值归因（逐条对比，非估算）**：
+
+| 项 | 字节 |
+| --- | --- |
+| `lib/arm64-v8a/libexo_dovi_renderer.so` | 9,708,848 |
+| `classes17.dex` 微差 | +1 |
+| `classes20.dex` 微差 | +17 |
+| **合计** | **9,708,866** |
+
+那 18 字节**不是排除引起的**：同一 flag 重复构建时 dex 也会变
+（实测 115,206,645 vs 115,206,636），属既有构建非确定性。
+除该库外，两个 APK 的条目集合与其余条目大小**完全一致**。
+
+**对照项（排除后仍在，证明未误伤）**：`libavcodec.so`、`libc++_shared.so`、
+`libexo_ass.so`、`assets/lab/7zz`、`assets/lab/libc++_shared.so`，
+以及 DV7 用的 `libdovi_android.so`（arm64 446,240 / v7a 336,208）。
+
+#### 16.39.3 双向真机验证
+
+| 场景 | 结果 |
+| --- | --- |
+| **未装模块**（库已排除） | `OK (82 tests)`；证据 `hostShipsLibrary=false probeAvailable=false` |
+| **装模块** | `OK (4 tests)`；证据 `moduleInstalled=true probeAvailable=false reason=missing-capability` |
+| **零模块态**（全新安装） | `OK (82 tests)`，`RuntimeNoModuleDeviceTest` 10 项全部执行 |
+
+**关键证据解读**：装模块后 `reason=missing-capability` 而非 `load-*`，
+说明库**成功加载**（模拟器缺 Vulkan 1.2 / AImageReader 所以能力探测不通过）。
+这正是 S14 建立的降级语义：库能加载、能力不足时返回结果而非抛异常。
+
+**新增测试类** `RuntimeDv5ModuleLoadDeviceTest`（4 项）：
+
+| 用例 | 断言 |
+| --- | --- |
+| `resolverPointsAtTheModuleFile` | resolver 指向模块文件 |
+| `loadingTheResolvedFileMapsItFromTheModuleDirectory` | **映射来源**是模块目录（非仅「加载成功」） |
+| `probeReportsAnOutcomeWithTheModuleInstalled` | probe 返回可识别状态 |
+| `hostDoesNotShipItsOwnCopy` | 宿主不再自带副本（防止未来回归） |
+
+断言**映射来源**而非加载成败：宿主已不带副本，成功只可能来自模块，
+但显式检查来源能捕获「未来重新引入内嵌副本」的回归。
+
+#### 16.39.4 修正的测试覆盖缺口
+
+`RuntimeNoModuleDeviceTest` 的模块列表**硬编码**且缺 `dv5`：
+
+```java
+private static final String[] MODULE_PACKAGES = {
+        "com.silent.runtime.mpv", "com.silent.runtime.ijk", "com.silent.runtime.sherpa",
+};   // ← 缺 dv5
+```
+
+后果：该类的「全新安装态」检查遍历此列表，**装着 dv5 模块时也会通过**——
+一个静默失效的测试。已补 `dv5`，并在 `everyKnownModuleIdHasATrustedPackageName`
+处加注释说明「此列表须与 `RuntimeCompatibility.PACKAGES` 同步，
+遗漏会让上述检查在模块已装时仍然通过」。
+
+这是本阶段除体积收益外**更有价值的产出**：一个会静默失效的测试比没有测试更危险。
+
+**累计真机验证**：runtime 包 **82 项**（78 + 4 新增）。
+
+### 16.40 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -2680,6 +2765,7 @@ ijk/mpv/sherpa）。若此时排除，用户会失去 DV5 能力却无处可装�
 | **S20** | arm64 排除落地 + 修正 S17/S19 错误结论 | ✅ 已交付 |
 | **S21** | 全包回归（78 项）+ 修正测试隔离缺陷 | ✅ 已交付 |
 | **S22** | DV5 宿主侧接入 + 发现 CI 构建缺口 | ✅ 已交付 |
+| **S23** | DV5 构建期排除 + 双向验证（82 项） | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。

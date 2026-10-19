@@ -140,6 +140,21 @@ android {
         packaging.jniLibs.excludes.add('**/libsherpa-onnx-jni.so')
     }
 
+    // The DV5 GPU renderer is delivered as an installable runtime module too.
+    //
+    // Unlike IJK and sherpa this library is produced by CMake rather than coming from the jniLibs
+    // source set; S16 measured that packaging.jniLibs.excludes still reaches it, with the size
+    // difference matching the library exactly. ExoDv5Native reports the renderer unavailable rather
+    // than throwing when the library cannot be loaded, and ExoDv5GpuMappingPolicy already has
+    // fallback routes, so removing the bundled copy degrades Dolby Vision Profile 5 to those routes
+    // instead of breaking playback.
+    //
+    // Pass -Pdv5Bundle=true to restore the previous self-contained build.
+    def dv5Bundle = (project.findProperty('dv5Bundle') ?: 'false').toString().toBoolean()
+    if (!dv5Bundle) {
+        packaging.jniLibs.excludes.add('**/libexo_dovi_renderer.so')
+    }
+
     signingConfigs {
         release {
             if (hasReleaseSigning) {
