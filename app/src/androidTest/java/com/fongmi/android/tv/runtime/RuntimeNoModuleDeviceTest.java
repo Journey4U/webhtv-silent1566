@@ -1,5 +1,6 @@
 package com.fongmi.android.tv.runtime;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -10,6 +11,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 
 import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.setting.PlayerSetting;
+import com.fongmi.android.tv.ui.dialog.PlayerKernelDialog;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -60,6 +62,56 @@ public class RuntimeNoModuleDeviceTest {
         assertFalse("IJK must not be offered without its module", PlayerSetting.isIjkAvailable());
         assertFalse(PlayerSetting.isPlayerAvailable(PlayerSetting.MPV));
         assertFalse(PlayerSetting.isPlayerAvailable(PlayerSetting.IJK));
+    }
+
+    /**
+     * The kernel picker must not list an engine that cannot start.
+     *
+     * <p>Filtering the menu is what makes the availability checks user-visible; without it the user
+     * picks MPV, and only then learns it is unavailable.
+     */
+    @Test
+    public void kernelPickerListsOnlyUsableKernels() {
+        org.junit.Assume.assumeTrue("modules are installed; this test covers the fresh-install state",
+                noModulesInstalled());
+
+        PlayerSetting.resetMpvAvailability();
+        PlayerSetting.resetIjkAvailability();
+
+        String[] labels = PlayerKernelDialog.kernels(
+                ApplicationProvider.getApplicationContext().getResources());
+        int[] available = PlayerSetting.availableKernels();
+
+        assertEquals("the menu must list exactly the usable kernels", available.length, labels.length);
+        for (int i = 0; i < available.length; i++) {
+            assertFalse("an unavailable kernel must not appear in the menu",
+                    available[i] == PlayerSetting.MPV || available[i] == PlayerSetting.IJK);
+            assertNotNull("every menu row needs a label", labels[i]);
+            assertFalse("no menu row may be blank", labels[i].trim().isEmpty());
+        }
+        // The two engines that need no module must still be offered, or the app would be unusable.
+        assertEquals(2, available.length);
+        assertEquals(PlayerSetting.EXO, available[0]);
+        assertEquals(PlayerSetting.SYSTEM, available[1]);
+    }
+
+    /**
+     * Menu indices are not KERNEL_ORDER ranks once the menu is filtered.
+     *
+     * <p>Index 1 must resolve to the system engine, not IJK: the menu skipped the unavailable ones.
+     * Getting this wrong would hand the caller an engine that cannot start.
+     */
+    @Test
+    public void kernelPickerMapsMenuIndicesThroughTheAvailableList() {
+        org.junit.Assume.assumeTrue("modules are installed; this test covers the fresh-install state",
+                noModulesInstalled());
+
+        PlayerSetting.resetMpvAvailability();
+        PlayerSetting.resetIjkAvailability();
+
+        assertEquals(PlayerSetting.EXO, PlayerSetting.availableKernelAt(0));
+        assertEquals(PlayerSetting.SYSTEM, PlayerSetting.availableKernelAt(1));
+        assertEquals(PlayerSetting.EXO, PlayerSetting.availableKernelAt(2));
     }
 
     /** The engines that need no module must stay available, or the app would be unusable. */
