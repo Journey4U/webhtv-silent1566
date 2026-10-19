@@ -2361,7 +2361,58 @@ S17 的方法（实测资产是否真的被使用）已应用到整个 APK：
 
 **等待用户批准。**
 
-### 16.35 后续阶段
+### 16.35 S19 已交付（2026-10-19）：forcetech 在 arm64 上整体失效，并发现既有缺陷
+
+**范围**：S17 证明 `assets/libmitv.so` 从不被加载后，追问一个更大的问题——
+**依赖它的提取器本身是否可用**。
+
+**结论：arm64 构建上整个 forcetech 提取器不可用**，且这暴露了一个**既有缺陷**
+（与模块化无关，但由本阶段发现）。
+
+**结构性原因**：forcetech AAR 的原生库**只有 armeabi-v7a**：
+
+| AAR 内路径 | 体积 |
+| --- | --- |
+| `jni/armeabi-v7a/libmitv.so` | 54,548 |
+| `jni/armeabi-v7a/libp2p.so` | 787,324 |
+| `jni/armeabi-v7a/libp3p.so` | 824,872 |
+| `assets/libmitv.so` | 3,745,900 |
+
+arm64 flavor 的 `abiFilters "arm64-v8a"`（`app/build.gradle:74`）把 `jni/armeabi-v7a/`
+**全部过滤掉**，而 `assets/` 不受 `abiFilters` 约束，所以只有那个 32 位的
+`assets/libmitv.so` 进了 arm64 APK。
+
+**决定性证据（`RuntimeForcetechExtractorAvailabilityDeviceTest`，真机 OK (3 tests)）**：
+
+```text
+nativeLibraryDir=/data/app/com.silent.android.webhtv-.../lib/arm64 present=[]
+bareNameLookups p2p=UnsatisfiedLinkError p3p=UnsatisfiedLinkError mitv=UnsatisfiedLinkError
+```
+
+即：arm64 上三个库**全部缺失**，三个裸名查找**全部失败**。
+而 `Force` 的加载路径正是这三条裸名查找（`P2PService` → `p2p`、`P3PService` → `p3p`、
+`MainActivity` → `mitv`）。
+
+**两个不同性质的结论**：
+
+| 结论 | 性质 |
+| --- | --- |
+| 3.7 MB 资产可**无损失移除** | 本阶段要支持的结论 |
+| arm64 上 forcetech 提取器**已不可用** | **既有缺陷**，独立于本阶段 |
+
+**既有缺陷（只报告，不修）**：`Source.java:42` **无条件**注册 `new Force()`，
+而 arm64 上它必然失败。用户遇到 `p2p://`/`mitv://` 源时会走失败路径，
+而不是「该能力不可用」的明确提示。这与 S6 修好的「内核选择器无条件列出全部内核」
+是同一类问题（注册与可用性脱节），但**不在本任务范围内**，按 `AGENTS.md` §2 只报告。
+
+**对移除方案的影响**：移除 `assets/libmitv.so` 在 arm64 上**零能力损失**
+（它从未被加载，且其消费方也已失效）。v7a 构建的 assets 版本虽同样未被加载
+（S17 已证：`loadLibrary` 只查 `nativeLibraryDir`，而 v7a 的 `jni` 版本才是被命中的那个），
+但未逐一实测 v7a 的其他路径，故实施时**仅对 arm64 排除**，v7a 保持现状。
+
+**累计真机验证**：80 项。
+
+### 16.36 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -2398,6 +2449,7 @@ S17 的方法（实测资产是否真的被使用）已应用到整个 APK：
 | **S16** | CMake 产物排除实测（解决 S15 未决点） | ✅ 已交付 |
 | **S17** | forcetech 资产死重量取证（3.7 MB 可移除） | ✅ 已交付 |
 | **S18** | 剩余候选量化与优先级排序（评估） | ✅ 已交付 |
+| **S19** | forcetech 在 arm64 整体失效取证（含既有缺陷） | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
