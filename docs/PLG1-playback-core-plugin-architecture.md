@@ -1934,7 +1934,68 @@ Context assetContext = RuntimePython.assetContext();   // 模块 context 或 nul
 **建议：实施（方案 C）。** 两个技术前提（资产读取、无 SONAME 依赖）均已真机证实，
 依赖次序与降级点也已定位。**等待用户明确批准。**
 
-### 16.30 后续阶段
+### 16.30 S14 已交付（2026-10-19）：DV5 渲染器降级验证，发现更大的可拆项
+
+**范围**：重新实测 APK 构成（此前候选清单有遗漏），并验证新发现的最大单项能否模块化。
+
+**新发现：`libexo_dovi_renderer.so` = 9.26 MiB，是剩余最大单项**（大于 Python 的 21 MB 之半）。
+它不在原候选清单 §5.2 中，原因是清单按「上游对应」筛选，而该库是 WebHTV 自研。
+
+**为什么它是优质候选**（三项条件均优于已完成的模块）：
+
+| 条件 | `libexo_dovi_renderer.so` | 对比 |
+| --- | --- | --- |
+| 依赖 | 只依赖系统库（`libandroid`/`liblog`/`libmediandk`/`libvulkan`/`libdl`/`libm`/`libc`，`readelf` 实测） | 无需 `hostLibraries` 契约 |
+| SONAME | **有** | 无 S10/S12 那类无 SONAME 依赖风险 |
+| 源码 | 仓库内（`app/src/main/cpp/exo_dovi_renderer.cpp`，1251 行） | 可注入 resolver，同 IJK 模式 |
+| 降级 | **已存在且是设计意图** | 见下 |
+
+库之所以达 9 MB，是因为 `CMakeLists.txt` 把 libplacebo / shaderc / libdovi 作为
+**IMPORTED STATIC** 静态链接进来，故自包含。
+
+**降级链（实施前必须验证的前提）**：
+
+```text
+ExoDv5Native.loadLibrary()          catch Throwable -> LoadResult(false, "load-…")
+  -> probe()                        -> Probe(available=false, …)
+  -> ExoDv5GpuRendererFactory.create()  -> null
+  -> ExoUtil.buildVideoRenderers()  catch (Throwable ignored) -> 不添加
+  -> 随后无条件添加标准渲染器
+```
+
+模块化会把「库不可用」变成**常态**（未装模块的用户），所以硬依赖会让所有未装模块的用户
+无法播放。降级链必须真实有效，而不只是读起来像。
+
+**实验（`RuntimeDv5DegradationDeviceTest`，真机 OK (3 tests)）**：
+
+| 用例 | 结果 |
+| --- | --- |
+| `probeReportsOutcomeInsteadOfThrowing` | ✅ probe 返回结果而非抛异常 |
+| `factoryReturnsNullWhenRendererIsUnavailable` | ✅ 不可用或 null 的 probe 被拒绝 |
+| `standardRenderersAreAddedRegardlessOfTheDv5Renderer` | ✅ 标准渲染器不受影响 |
+
+**决定性证据**（设备日志）：
+
+```text
+hostShipsLibrary=true probeAvailable=false
+```
+
+即：库**存在且加载成功**，但 probe 报告**不可用**（模拟器缺 Vulkan 1.2 / AImageReader），
+且是**返回结果而非抛异常**。这恰好演示了模块化后未装模块时的路径——
+渲染器不可用，播放照常。
+
+**过程中的自我纠错**：首轮 2 项失败，均为**测试假设错误**而非产品缺陷——
+（1）我断言「宿主带库则 probe 应可用」，但模拟器缺 Vulkan，实际返回 `missing-capability`；
+（2）`Probe` 是包私有 record，反射构造需 `setAccessible(true)`。
+修正为断言**契约**（返回可识别的状态而非抛异常）而非断言设备能力。
+
+**建议**：`libexo_dovi_renderer.so` 应作为**下一个模块化目标**，优先级高于 Python——
+收益 9.26 MiB 且风险显著更低（无 `hostLibraries`、有 SONAME、降级链已验证）。
+实施前仍需 §7 设计门禁与用户批准。
+
+**累计真机验证**：74 项。
+
+### 16.31 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -1966,6 +2027,7 @@ Context assetContext = RuntimePython.assetContext();   // 模块 context 或 nul
 | **S11** | 模块资产读取机制对比（选定公开 API） | ✅ 已交付 |
 | **S12** | Python 加载次序实验（契约须拓扑排序） | ✅ 已交付 |
 | **S13** | Python 模块化设计门禁（待批准） | ⏸ 待批准 |
+| **S14** | DV5 渲染器降级验证（发现更大可拆项） | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
