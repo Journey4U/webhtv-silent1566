@@ -2512,7 +2512,58 @@ onVariants(selector().all()) { variant ->
 
 **累计真机验证**：89 项。
 
-### 16.37 后续阶段
+### 16.37 S21 已交付（2026-10-19）：全包回归 + 修正测试隔离缺陷
+
+**范围**：S20 改的是**打包内容**（移除一个资产），但当时只跑了 forcetech 专项测试——
+这不构成「APK 仍正常工作」的证据。本阶段补上这个决定性检查，并修正过程中暴露的缺陷。
+
+**全包回归（真机 arm64，78 项）**：
+
+```text
+OK (78 tests)   —— 18 个测试类，覆盖 runtime 包全部
+```
+
+这确认 S20 的资产移除**没有破坏任何东西**。
+
+**过程中发现的测试隔离缺陷（我 S12 引入）**：
+
+首轮全包运行报 1 个失败：
+
+```text
+preloadingTheDependencyMakesTheDependentLoadable
+  expected: .../files/s1[2-python-order]
+  but was:  .../files/s1[0-soname-lib]
+```
+
+**不是产品回归**，是测试缺陷：一个进程只能映射一个库一次，而
+`RuntimeNoSonameDependencyDeviceTest`（S10）与 `RuntimePythonLoadOrderDeviceTest`（S12）
+**都用 `libcrypto_python.so`**。谁先跑谁拥有该映射，后跑的那个断言必然失败。
+
+S12 当时只**单独跑方法**（`-e class ...#method`），所以从未暴露。
+
+**修正**：给三个受影响的测试补上前提守卫（`assumeTrue`），
+使「前提不成立」表现为**跳过**而非**假失败**：
+
+| 测试类 | 补守卫的方法 |
+| --- | --- |
+| `RuntimePythonLoadOrderDeviceTest` | `preloadingTheDependencyMakesTheDependentLoadable` |
+| `RuntimeNoSonameDependencyDeviceTest` | `preloadedLibraryWithSonameSatisfiesDependency`、`preloadedLibraryWithoutSonameSatisfiesDependency` |
+
+**为什么用 `assumeTrue` 而不是删除或改断言**：这些测试的价值在于「单独运行时可观察到
+具体机制」（S10/S12 的结论正是这样得出的）。守卫保留了该能力，同时让它们在
+全包运行时诚实跳过，而不是报一个与主题无关的失败。
+
+**教训（与 S20 的教训同类）**：**验证的范围必须匹配改动的范围**。
+S20 改的是打包内容，却只跑了与该资产直接相关的测试；
+而 S20 之前的 S12 改的是测试代码，却只单独跑方法。
+两次都是「验证范围窄于改动范围」，两次都靠**扩大验证范围**才发现问题。
+
+**真机验证口径修正**：此前各阶段累计写「89 项」，那是**逐次运行的累加**，
+不是独立的测试集合。runtime 包**实际共 78 个测试方法**（18 个类），
+本阶段的全包运行 `OK (78 tests)` 即为**全部**。
+后续统一以「runtime 包 78 项全绿」为口径，不再逐阶段累加。
+
+### 16.38 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -2551,6 +2602,7 @@ onVariants(selector().all()) { variant ->
 | **S18** | 剩余候选量化与优先级排序（评估） | ✅ 已交付 |
 | **S19** | forcetech 在 arm64 整体失效取证（含既有缺陷） | ✅ 已交付 |
 | **S20** | arm64 排除落地 + 修正 S17/S19 错误结论 | ✅ 已交付 |
+| **S21** | 全包回归（78 项）+ 修正测试隔离缺陷 | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。

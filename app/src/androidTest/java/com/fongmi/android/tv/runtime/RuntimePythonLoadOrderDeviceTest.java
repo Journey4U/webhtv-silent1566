@@ -162,12 +162,21 @@ public class RuntimePythonLoadOrderDeviceTest {
      *
      * <p>This is what the module's {@code loadOrder} must do. It also confirms the finding above is
      * about ordering rather than about these libraries being unloadable by absolute path.
+     *
+     * <p>Guarded by the same precondition as the finding: a process maps a given library once, so if
+     * another test class already mapped this dependency — {@code RuntimeNoSonameDependencyDeviceTest}
+     * uses the same library — the staged copy can never become the mapping and the assertion below
+     * would fail for a reason unrelated to this test's subject.
      */
     @Test
     public void preloadingTheDependencyMakesTheDependentLoadable() throws Exception {
         File dependency = stage(DEPENDENCY);
         File dependent = stage(DEPENDENT);
         String stagePath = dependency.getParentFile().getCanonicalPath();
+
+        assumeTrue("another test already loaded " + DEPENDENCY + " in this process, so the staged "
+                        + "copy cannot become the mapping; run this class alone to observe it",
+                mappingOrigins(DEPENDENCY).isEmpty());
 
         System.load(dependency.getAbsolutePath());
         assertEquals("the preloaded dependency should be the only mapping of " + DEPENDENCY,

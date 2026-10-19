@@ -125,11 +125,20 @@ public class RuntimeNoSonameDependencyDeviceTest {
     /**
      * Control: a preloaded library <em>with</em> a soname satisfies a later absolute-path load's
      * {@code DT_NEEDED}, and is not loaded a second time.
+     *
+     * <p>Guarded by a precondition, because a process maps a given library once: another test class
+     * ({@code RuntimePythonLoadOrderDeviceTest}) stages this same library, and whichever runs first
+     * owns the mapping. Without the guard the later one would fail for a reason unrelated to its
+     * subject.
      */
     @Test
     public void preloadedLibraryWithSonameSatisfiesDependency() throws Exception {
         File lib = stage("s10-soname-lib", SONAME_LIB);
         File dependent = stage("s10-soname-dependent", SONAME_DEPENDENT);
+
+        assumeTrue("another test already loaded " + SONAME_LIB + " in this process, so the staged "
+                        + "copy cannot become the mapping; run this class alone to observe it",
+                mappingOrigins(SONAME_LIB).isEmpty());
 
         System.load(lib.getAbsolutePath());
         assertEquals("the preloaded copy should be the only mapping of " + SONAME_LIB,
@@ -152,6 +161,10 @@ public class RuntimeNoSonameDependencyDeviceTest {
     public void preloadedLibraryWithoutSonameSatisfiesDependency() throws Exception {
         File lib = stage("s10-nosoname-lib", NO_SONAME_LIB);
         File dependent = stage("s10-nosoname-dependent", NO_SONAME_DEPENDENT);
+
+        assumeTrue("another test already loaded " + NO_SONAME_LIB + " in this process, so the "
+                        + "staged copy cannot become the mapping; run this class alone to observe it",
+                mappingOrigins(NO_SONAME_LIB).isEmpty());
 
         System.load(lib.getAbsolutePath());
         assertEquals("the preloaded copy should be the only mapping of " + NO_SONAME_LIB,
