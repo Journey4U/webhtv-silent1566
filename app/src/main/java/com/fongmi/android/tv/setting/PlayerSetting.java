@@ -306,6 +306,44 @@ public class PlayerSetting {
         return ordered;
     }
 
+    /**
+     * 本机实际可用的内核，按优先级顺序。
+     *
+     * <p>模块化之后 MPV 与 IJK 可能不存在（未安装对应模块），而内核选择器不能提供一个
+     * 选不动的选项——用户选中后只会得到失败提示。所以菜单按可用性过滤。
+     */
+    public static int[] availableKernels() {
+        int count = 0;
+        for (int kernel : KERNEL_ORDER) if (isPlayerAvailable(kernel)) count++;
+        int[] available = new int[count];
+        int index = 0;
+        for (int kernel : KERNEL_ORDER) if (isPlayerAvailable(kernel)) available[index++] = kernel;
+        return available;
+    }
+
+    /**
+     * 内核在 {@link #availableKernels()} 里的下标；不在其中时退回 0。
+     *
+     * <p>选中项可能已不可用（例如用户原本用 MPV，之后卸载了模块），此时不能返回越界下标。
+     */
+    public static int availableKernelIndex(int player) {
+        int target = sanitizePlayer(player);
+        int[] available = availableKernels();
+        for (int i = 0; i < available.length; i++) if (available[i] == target) return i;
+        return 0;
+    }
+
+    /**
+     * {@link #availableKernels()} 的下标还原成内核常量；越界时退回 EXO。
+     *
+     * <p>菜单只列可用内核，所以菜单下标与 {@link #kernelAt} 的位次不再一致——
+     * 任何从菜单下标反推内核的地方都必须用本方法。
+     */
+    public static int availableKernelAt(int index) {
+        int[] available = availableKernels();
+        return index >= 0 && index < available.length ? available[index] : EXO;
+    }
+
     /** 手动轮换：沿优先级顺序取下一个，走到末尾回到开头。 */
     public static int nextPlayer(int player) {
         return kernelAt((kernelRank(player) + 1) % KERNEL_ORDER.length);

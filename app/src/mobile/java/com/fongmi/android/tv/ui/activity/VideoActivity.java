@@ -5218,7 +5218,7 @@ private final Task.Scope mPersonalRecommendationTasks = new Task.Scope(Task.reco
         items[kernel.length] = getString(R.string.player_kernel_external);
         new com.google.android.material.dialog.MaterialAlertDialogBuilder(this).setItems(items, (dialog, index) -> {
             if (index < kernel.length) {
-                int which = PlayerSetting.kernelAt(index);
+                int which = PlayerSetting.availableKernelAt(index);
                 if (!refreshAndSwitchPlayerKernel(which)) {
                     clearLyrics();
                     player().switchPlayerManually(which);

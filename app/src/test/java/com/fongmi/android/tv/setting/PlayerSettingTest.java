@@ -102,4 +102,62 @@ public class PlayerSettingTest {
         assertEquals(PlayerSetting.IJK, PlayerSetting.firstUntriedPlayer(fromExo));
     }
 
+    /**
+     * 内核菜单只列可用内核，所以菜单下标与 KERNEL_ORDER 的位次不再一致。
+     *
+     * <p>纯 JVM 下拿不到 PackageManager，MPV 与 IJK 自然不可用；这正是“零模块”的形状，
+     * 也正好能钉住“按下标取的是可用列表而不是位次表”这个容易回归的点。
+     */
+    @Test
+    public void availableKernels_listsOnlyUsableKernelsInPriorityOrder() {
+        PlayerSetting.resetMpvAvailability();
+        PlayerSetting.resetIjkAvailability();
+
+        int[] available = PlayerSetting.availableKernels();
+
+        assertArrayEquals(new int[]{PlayerSetting.EXO, PlayerSetting.SYSTEM}, available);
+    }
+
+    @Test
+    public void availableKernelAt_mapsMenuIndexThroughTheAvailableList() {
+        PlayerSetting.resetMpvAvailability();
+        PlayerSetting.resetIjkAvailability();
+
+        // Menu index 1 is SYSTEM here, not IJK: the menu skipped the unavailable kernels. Using
+        // kernelAt(1) instead would hand the caller IJK, an engine that cannot start.
+        assertEquals(PlayerSetting.EXO, PlayerSetting.availableKernelAt(0));
+        assertEquals(PlayerSetting.SYSTEM, PlayerSetting.availableKernelAt(1));
+        assertEquals(PlayerSetting.EXO, PlayerSetting.availableKernelAt(-1));
+        assertEquals(PlayerSetting.EXO, PlayerSetting.availableKernelAt(2));
+    }
+
+    @Test
+    public void availableKernelIndex_fallsBackWhenTheSelectedKernelIsGone() {
+        PlayerSetting.resetMpvAvailability();
+        PlayerSetting.resetIjkAvailability();
+
+        assertEquals(0, PlayerSetting.availableKernelIndex(PlayerSetting.EXO));
+        assertEquals(1, PlayerSetting.availableKernelIndex(PlayerSetting.SYSTEM));
+        // The user was on MPV and then uninstalled the module; the menu must not select out of
+        // range.
+        assertEquals(0, PlayerSetting.availableKernelIndex(PlayerSetting.MPV));
+        assertEquals(0, PlayerSetting.availableKernelIndex(PlayerSetting.IJK));
+    }
+
+    /** 可用列表与位次表必须能互相对照，否则菜单与回退链会各说各话。 */
+    @Test
+    public void availableKernels_isASubsetOfKernelOrder() {
+        PlayerSetting.resetMpvAvailability();
+        PlayerSetting.resetIjkAvailability();
+
+        int[] available = PlayerSetting.availableKernels();
+        int previousRank = -1;
+        for (int kernel : available) {
+            assertTrue("every listed kernel must be a real kernel", PlayerSetting.isPlayer(kernel));
+            int rank = PlayerSetting.kernelRank(kernel);
+            assertTrue("available kernels must keep priority order", rank > previousRank);
+            previousRank = rank;
+        }
+    }
+
 }

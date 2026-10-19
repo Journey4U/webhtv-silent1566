@@ -1399,7 +1399,60 @@ S2-d 把可用性改为查平台（侧载模块显示可用），但 `RuntimeLoa
 **累计真机验证**：49 项
 （模块 10 / mpv 9 / mpv 加载 3 / mpv 功能 3 / mpv 播放 3 / ijk 6 / 仓库 4 / sherpa 加载 3 / 零模块 8）。
 
-### 16.21 后续阶段
+### 16.21 S6 已交付（2026-10-19）：内核选择器按可用性过滤
+
+**范围**：零模块时内核选择器不再提供 MPV/IJK；顺带修复 S0-f 引入的对比度缺陷。
+
+**缺陷：内核选择器无条件列出全部内核**
+
+`PlayerKernelDialog.kernels()` 直接返回 `KERNEL_ORDER` 的全量标签，不看可用性。
+模块化之前这没问题（四个内核都在），但移除 bundled 库之后，零模块时它仍然提供
+MPV 与 IJK —— 用户选中只会得到 `resolveManualPlayer` 的失败提示。
+
+**修复**：菜单按可用性过滤，并修正随之而来的下标语义。
+
+| 文件 | 改动 |
+| --- | --- |
+| `PlayerSetting` | 新增 `availableKernels()` / `availableKernelIndex()` / `availableKernelAt()` |
+| `PlayerKernelDialog` | `kernels()` 过滤；`notifySelected` 改用 `availableKernelAt` |
+| `TmdbDetailActivity` | 菜单下标回推改用 `availableKernelAt` |
+| `mobile/VideoActivity` | 同上 |
+
+**关键陷阱：菜单下标 ≠ 内核位次**
+
+过滤后，菜单下标与 `KERNEL_ORDER` 的位次不再对应。任何从菜单下标反推内核的地方
+都必须改用 `availableKernelAt`——否则「零模块时选第 2 项」会拿到 IJK（一个启动不了的引擎），
+而不是系统内核。三处调用点（`PlayerKernelDialog`、`TmdbDetailActivity`、`VideoActivity`）
+全部修正，并补测试钉住这个映射。
+
+**顺带修复的真实缺陷（S0-f 引入）**：`LeanbackForegroundContrastTest` 点名
+`dialog_runtime_modules.xml` —— 它用 `shape_config_history_dialog`（白天为浅色卡片）
+却配 `?attr/webhtvColorOnWallpaper`（浅色前景），**白天模式白字白底**。
+同背景的 `dialog_history.xml` 用的是 `@color/config_history_text`，已对齐。
+这是 S0-f 时只跑了过滤测试、没跑全量套件而漏掉的。
+
+**验证**：
+
+| 项 | 结果 |
+| --- | --- |
+| `PlayerSettingTest` | 新增 4 项（可用列表、下标映射、选中项消失时的回退、可用列表是位次表的子集） |
+| `PlayerControlFocusIntegrationTest` | 2 项源码断言更新为 `availableKernelAt` |
+| `LeanbackForegroundContrastTest` | **修复后通过** |
+| 两个 flavor 编译 | 通过 |
+
+**7 个预先存在的失败（与本次改动无关，已逐一取证）**：
+`MpvFontConfigTest`、`MpvHlsCacheCoordinatorTest`、`ReaderPlaybackRoutingSourceTest`×2、
+`TmdbUIAdapterTest`、`TmdbSourceOnlyInteractionTest`、`WebThemeTokenSourceTest`。
+
+判定方法：前 5 个用 `git stash` 暂存改动后仍失败；后 2 个的断言目标在 **HEAD 就不存在**
+（leanback 的 `setTmdbRematchVisible(...)` 为 0 处；`eclipse.html` 是 CRLF 而测试期望 LF）。
+**不修**——它们不属于本任务范围，按 AGENTS.md 只报告。
+
+> 一次方法失误值得记录：我第一次做对照时用了错误的包名（`ui.helper` 而非 `ui.activity`），
+> Gradle 报 "No tests found" 而非失败，我却据此得出「是我的改动导致」的错误结论。
+> 后来改用直接证据（断言目标在 HEAD 是否存在）才判对。**对照实验必须确认它真的跑了。**
+
+### 16.22 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -1422,6 +1475,7 @@ S2-d 把可用性改为查平台（侧载模块显示可用），但 `RuntimeLoa
 | **S3-b** | 移除宿主 IJK 库 | ✅ 已交付（实测 -9.9 MB） |
 | **S4** | 移除宿主 sherpa 库 + 修复侧载模块不可加载 | ✅ 已交付（实测 -22.5 MB） |
 | **S5** | 零模块状态验证（新用户初始状态） | ✅ 已交付 |
+| **S6** | 内核选择器按可用性过滤 + 修复对比度缺陷 | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
