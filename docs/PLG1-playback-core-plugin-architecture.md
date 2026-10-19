@@ -1597,7 +1597,62 @@ S7 那条走不通的「预加载满足裸名查找」路径——可以直接�
 `libsqlite3_python` 0.89 + `libssl_python` 0.62 + `libchaquopy_java` 0.15）。
 本次只验证了可行性，未实施。
 
-### 16.26 后续阶段
+### 16.26 S10 已交付（2026-10-19）：无 SONAME 依赖实验，Python 模块化可行
+
+**范围**：验证「预加载无 `DT_SONAME` 的库能否满足后续按名依赖」——这决定 Python 运行时
+（Chaquopy，约 21 MB，未压缩口径）能否模块化。
+
+**为什么必须先做这个实验**：`libpython3.10.so` **没有 `DT_SONAME`**
+（`llvm-readelf -d` 确认：只有 `NEEDED`，无 `SONAME`），而 **13 个库按裸名依赖它**
+（`libchaquopy_java.so` + 12 个 `bootstrap-native` 扩展模块）。
+bionic 源码对此有明确警告：
+
+> Before API 23, the linker used the basename in place of DT_SONAME. After we switched,
+> apps with libraries without a DT_SONAME stopped working: they could no longer be found
+> by DT_NEEDED from another library.
+
+该 basename 回退以 `get_application_target_sdk_version() < 23` 为条件，本设备 API 28、
+targetSdk ≥ 23，故**按源码推断应当失败**。
+
+**结论：实测通过——预加载确实满足后续按名依赖，Python 模块化可行。**
+
+**实验（`RuntimeNoSonameDependencyDeviceTest`，真机 OK (2 tests)）**：
+
+| 用例 | 被依赖库 | 结果 |
+| --- | --- | --- |
+| `preloadedLibraryWithSonameSatisfiesDependency` | `libcrypto_python.so`（有 SONAME） | ✅ 对照通过 |
+| `preloadedLibraryWithoutSonameSatisfiesDependency` | `libpython3.10.so`（**无 SONAME**） | ✅ **预加载副本被复用** |
+
+设计要点（使结论可归因、且贴合真实布局）：
+
+1. 两个库**分别放在不同子目录**（`s10-nosoname-lib` / `s10-nosoname-dependent`），
+   都不在 linker 搜索路径上——真实场景正是如此：扩展模块解压到
+   `filesDir/chaquopy/bootstrap-native/<abi>/`，解释器在模块的 native library 目录。
+   若两库同目录，结论可能只是「同目录恰好能找到」，不具说服力。
+2. 断言被依赖库**只有一个映射来源**，且等于预加载目录。宿主自己也带
+   `libpython3.10.so`；若出现第二个来自宿主目录的映射，说明名字是**经搜索路径**解析的，
+   而真实模块里宿主根本没有这些库——那结论就不成立。
+3. 有 SONAME 的一对作为对照：同样形状（预加载一个、再按绝对路径加载依赖方），
+   若它通过而无 SONAME 的失败，才能归因于 SONAME 缺失而非绝对路径加载本身。
+
+**过程中的两次自我纠错（记录以免重犯）**：
+
+- 首版判别测试报 `origins=[]`，看似「库未映射」。实际是 `origins=[""]`——
+  我用 `line.substring` 取目录时对 `/proc/self/maps` 的字段切分有误，
+  空字符串列表被打印成 `[]`。改用按空白切分取第 6 个字段后正常。
+- 修正后又出现 `/data/user/0/...` 与 `/data/data/...` 的比较失败：二者是同一目录的
+  符号链接别名。改用 `getCanonicalPath()` 比较。
+
+**对架构的影响**：Python 是**下一个可拆项**，且不需要 S7 那条走不通的路径——
+`chaquo/Platform.java` 是仓库内源码，同时控制资产定位（`getPath()`/`extractAssets()`，
+S9 已证明 `addAssetPath` 可用）与原生库加载（`loadNativeLibs()`，本阶段证明预加载有效）。
+预计收益约 **21 MB**（未压缩口径；`assets/chaquopy` 12.3 + `libpython3.10` 3.5 +
+`libcrypto_python` 3.7 + `libsqlite3_python` 0.89 + `libssl_python` 0.62 +
+`libchaquopy_java` 0.15）。本次只验证可行性，未实施。
+
+**累计真机验证**：64 项。
+
+### 16.27 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -1625,6 +1680,7 @@ S7 那条走不通的「预加载满足裸名查找」路径——可以直接�
 | **S7** | 预加载去重实验（划定模块化边界） | ✅ 已交付 |
 | **S8** | 体积口径修正（debug 专用资产） | ✅ 已交付 |
 | **S9** | 资产重定向实验（Python 模块化可行性） | ✅ 已交付 |
+| **S10** | 无 SONAME 依赖实验（Python 模块化可行性） | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
