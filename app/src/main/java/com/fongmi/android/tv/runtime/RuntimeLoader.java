@@ -30,6 +30,7 @@ public final class RuntimeLoader {
     private final RuntimePlatform.LibraryLoader libraryLoader;
     private final RuntimeVerifier.HostLibraries hostLibraries;
     private final ManifestSource manifestSource;
+    private final RuntimeVerifier.PayloadReader payloads;
     private final RuntimeStore store;
 
     public RuntimeLoader(
@@ -38,11 +39,26 @@ public final class RuntimeLoader {
             RuntimePlatform.LibraryLoader libraryLoader,
             RuntimeVerifier.HostLibraries hostLibraries,
             ManifestSource manifestSource) {
+        this(store, packageInfo, libraryLoader, hostLibraries, manifestSource, null);
+    }
+
+    /**
+     * @param payloads opens non-library payloads (e.g. {@code assets/chaquopy/**}); may be
+     *     {@code null} for a host that only ever loads library-only modules
+     */
+    public RuntimeLoader(
+            RuntimeStore store,
+            RuntimePlatform.PackageInfo packageInfo,
+            RuntimePlatform.LibraryLoader libraryLoader,
+            RuntimeVerifier.HostLibraries hostLibraries,
+            ManifestSource manifestSource,
+            RuntimeVerifier.PayloadReader payloads) {
         this.store = store;
         this.packageInfo = packageInfo;
         this.libraryLoader = libraryLoader;
         this.hostLibraries = hostLibraries;
         this.manifestSource = manifestSource;
+        this.payloads = payloads;
     }
 
     public static String manifestAssetName() {
@@ -79,7 +95,7 @@ public final class RuntimeLoader {
 
         RuntimeCatalog.RuntimeModule module = toCatalogModule(entry);
         RuntimeVerifier.Result result =
-                RuntimeVerifier.verify(module, manifest, libDir, expectedAbi, hostLibraries);
+                RuntimeVerifier.verify(module, manifest, libDir, expectedAbi, hostLibraries, payloads);
         if (!result.isOk()) return Outcome.failure(result.describe());
 
         File entryLibrary = new File(libDir, RuntimeManifest.nativeLibraryEntry(result.getEntryLibrary(), manifest.abi));
@@ -120,7 +136,7 @@ public final class RuntimeLoader {
         if (manifest == null) return Outcome.failure("模块缺少 " + MANIFEST_ASSET + " 清单");
 
         RuntimeVerifier.Result result =
-                RuntimeVerifier.verifyInstalled(manifest, libDir, expectedAbi, hostLibraries);
+                RuntimeVerifier.verifyInstalled(manifest, libDir, expectedAbi, hostLibraries, payloads);
         if (!result.isOk()) return Outcome.failure(result.describe());
 
         File entryLibrary = new File(libDir, RuntimeManifest.nativeLibraryEntry(result.getEntryLibrary(), manifest.abi));

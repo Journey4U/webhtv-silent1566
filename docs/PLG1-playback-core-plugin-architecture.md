@@ -2950,7 +2950,70 @@ private Loader loader() {
 
 **累计真机验证**：runtime 包 82 项（本阶段为纯 JVM 单测，不增加真机项）。
 
-### 16.43 后续阶段
+### 16.43 S27a 已交付（2026-10-19）：修复 PayloadReader 接线缺口
+
+**范围**：修复 S24 引入的一个**真实接线缺口**——契约层加了载荷校验缝，
+但**没有任何调用方提供实现**。
+
+#### 16.43.1 缺口
+
+S24 给 `RuntimeVerifier` 加了 `PayloadReader` 缝，`verifyFiles` 会按前缀分派，
+但：
+
+| 位置 | 状态 |
+| --- | --- |
+| `RuntimeVerifier` | ✅ 有 `PayloadReader` 参数 |
+| `RuntimeLoader` | ❌ **从未传入**（两处调用都走 5 参重载，`payloads = null`） |
+| `RuntimeAndroid` | ❌ **未提供实现** |
+
+后果：声明了载荷的模块（即 `python`）会被**失败关闭**拒掉，报
+「declared payload cannot be verified without a reader」——行为符合设计
+（宁可拒绝也不放行未校验载荷），但**功能不可用**。
+
+**为什么没被发现**：既有模块**全部只声明 `lib/**`**，所以这条缝从未被真实路径走到。
+S24 的单测直接调 `RuntimeVerifier` 并自己传 reader，**绕过了 `RuntimeLoader`**。
+
+#### 16.43.2 第二个设计缺陷（修复过程中发现）
+
+`PayloadReader.open(path)` 的签名**无法知道该读哪个包**——载荷在某个已装模块的
+APK 内，而 reader 只拿到一个路径。我第一版实现里写了个 `currentPackage()`
+返回 `null` 的占位，那等于让 reader 永远不可用。
+
+**修正**：签名改为 `open(packageName, path)`，与既有的
+`ManifestSource.read(packageName)` 对齐——校验器知道自己在校验哪个包，
+reader 不该去猜。
+
+#### 16.43.3 实施
+
+| 文件 | 改动 |
+| --- | --- |
+| `RuntimeVerifier.java` | `PayloadReader` 签名加 `packageName`；`verifyFiles`/`verifyPayload` 透传 |
+| `RuntimeLoader.java` | 新增 6 参构造器（带 `payloads`）；两处校验调用传入；5 参构造器保留并委托 |
+| `RuntimeAndroid.java` | 新增 `payloadReader()`：用 `createPackageContext(pkg).getAssets().open(path)`，与 `manifestSource()` 同一模式 |
+| `RuntimeAndroid.loader()` | 传入 `payloadReader()` |
+| `RuntimeLoaderTest.java` | 新增 2 项接线测试 |
+| `RuntimePayloadVerificationTest.java` | 适配新签名 |
+
+#### 16.43.4 验证
+
+新增 2 项**接线**测试（此前正是缺这类测试）：
+
+| 用例 | 断言 |
+| --- | --- |
+| `passesThePayloadReaderThroughToVerification` | **两个方向**：提供 reader 则通过；不提供则被拒（`cannot be verified without a reader`） |
+| `rejectsAPayloadWhoseDigestDoesNotMatchThroughTheLoader` | 经 `RuntimeLoader` 驱动时摘要校验确实生效 |
+
+第一项断言**两个方向**，所以若 reader 再次被漏传，它会失败。
+
+**单测**：runtime 包 **196 项全绿**（含新增 2 项）。
+
+**发现方式**：在实施第 4 步（构建期排除）时，检查「装模块后能否校验通过」
+才暴露出来——即**接线缺口是由端到端视角发现的，而非单测**。
+这与 S21 的教训同类：**验证范围必须匹配改动范围**。
+
+**累计真机验证**：runtime 包 82 项（本阶段为纯 JVM 单测，不增加真机项）。
+
+### 16.44 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -2995,6 +3058,7 @@ private Loader loader() {
 | **S24** | Python 第 1 步：契约层支持 assets 载荷校验 | ✅ 已交付 |
 | **S25** | Python 第 2 步：Platform 从模块读资产 + 拓扑序加载 | ✅ 已交付 |
 | **S26** | Python 第 3 步：惰性化 + 可用性门禁 | ✅ 已交付 |
+| **S27a** | 修复 PayloadReader 接线缺口 | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。

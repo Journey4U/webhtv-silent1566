@@ -34,9 +34,13 @@ public final class RuntimeVerifier {
      *
      * <p>Implementations must return {@code null} when the path does not exist, so a missing payload
      * is reported as a verification problem rather than as an exception.
+     *
+     * <p>Takes the package name because a payload is read out of a specific installed module's APK;
+     * the verifier knows which package it is checking, and the reader must not have to guess. This
+     * mirrors {@link RuntimeLoader.ManifestSource#read(String)}.
      */
     public interface PayloadReader {
-        java.io.InputStream open(String path) throws IOException;
+        java.io.InputStream open(String packageName, String path) throws IOException;
     }
 
     private RuntimeVerifier() {
@@ -64,7 +68,6 @@ public final class RuntimeVerifier {
             String expectedAbi,
             HostLibraries hostLibraries,
             PayloadReader payloads) {
-
         if (module == null) return Result.failure("catalog entry is missing");
         if (manifest == null) return Result.failure("module manifest is missing");
         if (!module.isValid()) return Result.failure("catalog entry is invalid");
@@ -83,7 +86,7 @@ public final class RuntimeVerifier {
 
         List<String> problems = new ArrayList<>();
         verifyHostLibraries(manifest, hostLibraries, problems);
-        verifyFiles(manifest, moduleRoot, payloads, problems);
+        verifyFiles(manifest, module.packageName, moduleRoot, payloads, problems);
         if (!problems.isEmpty()) return Result.failure(problems);
 
         return Result.success(manifest.library);
@@ -146,7 +149,7 @@ public final class RuntimeVerifier {
 
         List<String> problems = new ArrayList<>();
         verifyHostLibraries(manifest, hostLibraries, problems);
-        verifyFiles(manifest, moduleRoot, payloads, problems);
+        verifyFiles(manifest, manifest.packageName, moduleRoot, payloads, problems);
         if (!problems.isEmpty()) return Result.failure(problems);
 
         return Result.success(manifest.library);
@@ -225,12 +228,13 @@ public final class RuntimeVerifier {
     }
 
     private static void verifyFiles(
-            RuntimeManifest manifest, File moduleRoot, PayloadReader payloads, List<String> problems) {
+            RuntimeManifest manifest, String packageName, File moduleRoot,
+            PayloadReader payloads, List<String> problems) {
         for (RuntimeManifest.RuntimeFile file : manifest.files()) {
             if (RuntimeManifest.isNativeLibraryPath(file.path)) {
                 verifyNativeLibrary(file, manifest, moduleRoot, problems);
             } else {
-                verifyPayload(file, payloads, problems);
+                verifyPayload(file, packageName, payloads, problems);
             }
         }
     }
@@ -273,12 +277,13 @@ public final class RuntimeVerifier {
      * loader, which is the opposite of what this class is for.
      */
     private static void verifyPayload(
-            RuntimeManifest.RuntimeFile file, PayloadReader payloads, List<String> problems) {
+            RuntimeManifest.RuntimeFile file, String packageName, PayloadReader payloads,
+            List<String> problems) {
         if (payloads == null) {
             problems.add("declared payload cannot be verified without a reader: " + file.path);
             return;
         }
-        try (java.io.InputStream in = payloads.open(file.path)) {
+        try (java.io.InputStream in = payloads.open(packageName, file.path)) {
             if (in == null) {
                 problems.add("declared payload is missing: " + file.path);
                 return;

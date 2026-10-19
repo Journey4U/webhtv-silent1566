@@ -288,6 +288,31 @@ public final class RuntimeAndroid {
         };
     }
 
+    /**
+     * Opens a module's non-library payloads, such as the Python runtime's {@code assets/chaquopy/**}.
+     *
+     * <p>Reads through the module's own context, the same way {@link #manifestSource()} reads the
+     * manifest, so a payload always travels with the APK it was verified against. Returns
+     * {@code null} when the path is absent, which the verifier reports as a problem rather than
+     * treating as success.
+     */
+    public static RuntimeVerifier.PayloadReader payloadReader() {
+        return (packageName, path) -> {
+            Context context = App.get();
+            if (context == null || RuntimeText.isBlank(packageName) || RuntimeText.isBlank(path)) {
+                return null;
+            }
+            try {
+                // The module's AssetManager is rooted at the APK root, and manifest paths are written
+                // relative to that root (assets/chaquopy/...), so the path is used as-is.
+                Context module = context.createPackageContext(packageName, 0);
+                return module.getAssets().open(path);
+            } catch (PackageManager.NameNotFoundException e) {
+                return null;
+            }
+        };
+    }
+
     /** Resolves a host-provided library from the app's own native library directory. */
     public static RuntimeVerifier.HostLibraries hostLibraries() {
         return name -> {
@@ -314,7 +339,8 @@ public final class RuntimeAndroid {
     }
 
     public static RuntimeLoader loader(RuntimeStore store) {
-        return new RuntimeLoader(store, packageInfo(), libraryLoader(), hostLibraries(), manifestSource());
+        return new RuntimeLoader(store, packageInfo(), libraryLoader(), hostLibraries(),
+                manifestSource(), payloadReader());
     }
 
     /** Directory used for module downloads before they are handed to the installer. */

@@ -95,6 +95,31 @@ public class RuntimeLoaderTest {
                 + "}";
     }
 
+    /** A manifest that declares both a native library and a payload file. */
+    private static final String PAYLOAD_PATH = "assets/chaquopy/build.json";
+    private static final byte[] PAYLOAD_BYTES = "{\"python_version\":\"3.10\"}".getBytes(StandardCharsets.UTF_8);
+    private static final String PAYLOAD_SHA = RuntimeIntegrity.sha256(PAYLOAD_BYTES);
+
+    private String manifestWithPayload(String library) {
+        return "{"
+                + "\"module\":\"sherpa\","
+                + "\"packageName\":\"com.silent.runtime.sherpa\","
+                + "\"versionCode\":3,"
+                + "\"versionName\":\"1.3.0\","
+                + "\"compatibilityId\":\"sherpa-onnx-jni-v1\","
+                + "\"abi\":\"arm64-v8a\","
+                + "\"sha256\":\"" + LIB_SHA + "\","
+                + "\"size\":" + LIB_BYTES.length + ","
+                + "\"library\":\"" + library + "\","
+                + "\"hostLibraries\":{},"
+                + "\"files\":["
+                + "  {\"path\":\"" + LIB_NAME + "\",\"size\":" + LIB_BYTES.length
+                + ",\"sha256\":\"" + LIB_SHA + "\"},"
+                + "  {\"path\":\"" + PAYLOAD_PATH + "\",\"size\":" + PAYLOAD_BYTES.length
+                + ",\"sha256\":\"" + PAYLOAD_SHA + "\"}]"
+                + "}";
+    }
+
     /** Builds a module directory holding the declared library. */
     private File libDir(byte[] payload) throws IOException {
         File dir = folder.newFolder("libs");
@@ -378,5 +403,72 @@ public class RuntimeLoaderTest {
         File root = folder.newFolder("module-root-empty");
 
         assertNull(RuntimeLoader.fileTreeSource(root).read("com.silent.runtime.sherpa"));
+    }
+
+    /**
+     * The loader must pass its payload reader through to the verifier.
+     *
+     * <p>This is the wiring that was missing: the verifier grew a payload seam, but nothing supplied
+     * it, so a module declaring a payload was rejected with "cannot be verified without a reader"
+     * even though the host could read the file. Nothing caught it because every existing module
+     * declares only {@code lib/**}, so the seam was never exercised through this path.
+     *
+     * <p>Asserts both halves: supplying the reader lets the module verify, and withholding it does
+     * not — so the test fails if the reader is dropped again.
+     */
+    @Test
+    public void passesThePayloadReaderThroughToVerification() throws IOException {
+        recordInstalled();
+        // One directory, reused: the two loaders differ only in whether they supply a reader.
+        File dir = libDir(LIB_BYTES);
+
+        RuntimeLoader withReader = new RuntimeLoader(
+                store,
+                packageInfo(dir),
+                path -> loaded.add(path),
+                name -> null,
+                packageName -> manifestWithPayload(LIB_NAME),
+                (packageName, path) -> PAYLOAD_PATH.equals(path)
+                        ? new java.io.ByteArrayInputStream(PAYLOAD_BYTES) : null);
+
+        RuntimeLoader.Outcome ok = withReader.verify("sherpa", "arm64-v8a");
+        assertTrue(ok.getProblem(), ok.isOk());
+
+        RuntimeLoader withoutReader = new RuntimeLoader(
+                store,
+                packageInfo(dir),
+                path -> loaded.add(path),
+                name -> null,
+                packageName -> manifestWithPayload(LIB_NAME));
+
+        RuntimeLoader.Outcome rejected = withoutReader.verify("sherpa", "arm64-v8a");
+        assertFalse("a declared payload must not be accepted unverified", rejected.isOk());
+        assertTrue(rejected.getProblem(),
+                rejected.getProblem().contains("cannot be verified without a reader"));
+    }
+
+    /**
+     * A payload whose bytes do not match its declared digest must be rejected through this path too.
+     *
+     * <p>The verifier's own tests cover the rule; this covers that the rule is actually reached when
+     * the loader drives verification.
+     */
+    @Test
+    public void rejectsAPayloadWhoseDigestDoesNotMatchThroughTheLoader() throws IOException {
+        recordInstalled();
+
+        RuntimeLoader loader = new RuntimeLoader(
+                store,
+                packageInfo(libDir(LIB_BYTES)),
+                path -> loaded.add(path),
+                name -> null,
+                packageName -> manifestWithPayload(LIB_NAME),
+                (packageName, path) -> new java.io.ByteArrayInputStream(
+                        "tampered".getBytes(StandardCharsets.UTF_8)));
+
+        RuntimeLoader.Outcome outcome = loader.verify("sherpa", "arm64-v8a");
+
+        assertFalse(outcome.isOk());
+        assertTrue(outcome.getProblem(), outcome.getProblem().contains("payload digest mismatch"));
     }
 }

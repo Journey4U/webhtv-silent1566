@@ -88,7 +88,7 @@ public class RuntimePayloadVerificationTest {
 
     /** A reader over an in-memory payload map, standing in for the module APK's assets. */
     private static RuntimeVerifier.PayloadReader reader(Map<String, byte[]> payloads) {
-        return path -> {
+        return (packageName, path) -> {
             byte[] data = payloads.get(path);
             return data == null ? null : new ByteArrayInputStream(data);
         };
@@ -160,7 +160,7 @@ public class RuntimePayloadVerificationTest {
      */
     @Test
     public void reportsAReaderFailureAsAProblem() throws IOException {
-        RuntimeVerifier.PayloadReader failing = path -> {
+        RuntimeVerifier.PayloadReader failing = (packageName, path) -> {
             throw new IOException("simulated read failure");
         };
 
