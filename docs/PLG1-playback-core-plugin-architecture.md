@@ -1751,7 +1751,190 @@ libcrypto_chaquopy.so, libssl_chaquopy.so, libsqlite3_chaquopy.so, libchaquopy_j
 
 **累计真机验证**：71 项。
 
-### 16.29 后续阶段
+### 16.29 S13 设计门禁（2026-10-19）：Python（Chaquopy）模块化实施方案
+
+> 本节是 `AGENTS.md` §7 要求的实施前门禁产物。**在获得明确批准前不得实施。**
+
+#### 16.29.1 要实现的实际能力
+
+把 Python 运行时（Chaquopy）从默认 APK 移入可选模块，使用户**未安装模块时**：
+
+- 应用仍能正常启动、加载配置、播放视频（不崩溃）；
+- 使用 JS/Jar 源的配置完全不受影响；
+- 配置里出现 `.py` 源时，给出「需要安装 Python 模块」的明确引导，而不是静默失败。
+
+**安装模块后**：`.py` 源可用，行为与现在一致。
+
+#### 16.29.2 当前项目已有实现
+
+| 位置 | 现状 |
+| --- | --- |
+| `chaquo/` Gradle 模块 | 已是独立模块，产出 `assets/chaquopy/**`（20 文件）+ 8 个 `.so` |
+| `chaquo/Platform.java` | **仓库内源码**，`extends Python.Platform`，同时控制资产定位与原生库加载 |
+| `chaquo/Loader.java` | `Python.start(Platform.create())` 的入口 |
+| `PyLoader.java:24` | 构造时急切 `new Loader()` |
+| `BaseLoader.java:35,165` | `Loader.INSTANCE` 静态初始化 → 急切 `new PyLoader()` |
+| `PythonSubtitleScriptRuntime.java:14` | 构造时急切 `new Loader()` |
+| `LoginStateSync.java:655` | 已把 `files/chaquopy/` 视为需同步路径（既有约定） |
+
+#### 16.29.3 涉及仓库及完整 commit ID
+
+| 仓库 | 版本 | 说明 |
+| --- | --- | --- |
+| WebHTV（本仓库） | `b8a3a027da2aa77492b6b4a353af1368a01bd362` | 宿主侧改动 |
+| `Silent1566/webhtv-plugins` | `a00fb34` | 新增 `python` 模块定义与产物 |
+| Chaquopy | `com.chaquo.python:gradle:17.0.0` | 仅作为依赖，**不修改** |
+| Chaquopy 上游源码 | `chaquo/chaquopy@7b690f7e` | 只读参考（`importer.py`） |
+
+#### 16.29.4 最佳实践研究（证据）
+
+| 来源 | 版本/日期 | 证据等级 | 支持的论断 | 对 WebHTV 的适用性 |
+| --- | --- | --- | --- | --- |
+| `Python.Platform` Javadoc | Chaquopy 17.0.0 | 官方文档 | `Platform` 是**公开可子类化**的扩展点，`getPath()`/`onStart()` 为文档化方法 | **直接适用**：宿主已用此法 |
+| `importer.py` `initialize()` | `7b690f7e` | 上游源码 | 传入的 `context` 同时决定 `nativeLibraryDir`（ctypes）、`getFilesDir()`（`ASSET_PREFIX` 解压根）、`getSharedPreferences`（记账）与 `AssetZipFile`（读资产） | **直接适用**：一个注入点覆盖四项 |
+| `importer.py` `initialize_importlib()` | `7b690f7e` | 上游源码 | `ASSET_PREFIX = realpath(context.getFilesDir())/chaquopy/AssetFinder` | 解压位置随 context 走 |
+| Chaquopy issue #637（维护者 mhsmith） | 2022-06-17 | 维护者说明 | 「`AssetFinder` 路径是特殊处理的，**不要试图修改它们**」 | **重要约束**：不得改 `sys.path` 或自建 finder |
+| WebHTV 实测 S9 | 2026-10-19 | 本仓库真机证据 | `createPackageContext(pkg).getAssets()` 可读模块资产 | 实施用机制 |
+| WebHTV 实测 S10 | 2026-10-19 | 本仓库真机证据 | 预加载无 SONAME 的 `libpython3.10.so` 可满足后续按名依赖 | 库加载可行 |
+| WebHTV 实测 S12 | 2026-10-19 | 本仓库真机证据 | 现有裸名次序在绝对路径下**不成立**；`BaseLoader` 急切初始化会在模块缺失时抛异常 | 决定契约与降级设计 |
+
+**未能取得的证据**：上游无「Chaquopy 资产从模块 APK 加载」的先例（`FongMi/Release` 的
+`runtime-python` 走的是同一 Chaquopy 机制，但其宿主如何定位资产未公开源码）。
+故本方案的上游对应关系是**架构对应**，不是实现照搬。
+
+#### 16.29.5 方案对比
+
+| 方案 | 做法 | 判定 |
+| --- | --- | --- |
+| **A. 不改** | 保持 21 MB 内嵌 | 可行但放弃收益；与已完成的 mpv/ijk/sherpa 不一致 |
+| **B. 照搬上游** | 假定上游有现成做法 | **不可行**：无公开实现可照搬 |
+| **C. 最小适配（推荐）** | 模块 APK 承载 `assets/chaquopy/**` + 8 个 `.so`；`Platform` 改为从模块 context 读资产与加载库；`PyLoader`/`PythonSubtitleScriptRuntime` 改为惰性 + 可用性门禁 | **采用** |
+| D. 改 Chaquopy 二进制 | 重打包 `chaquopy_java.jar` | **否决**：维护成本高、升级即碎 |
+
+#### 16.29.6 推荐方案（C）的设计
+
+**1. 契约（模块侧 `assets/runtime.json`）**
+
+```json
+{
+  "module": "python",
+  "packageName": "com.silent.runtime.python",
+  "compatibilityId": "chaquopy-python310-v1",
+  "library": "lib/arm64-v8a/libchaquopy_java.so",
+  "loadOrder": [
+    "lib/arm64-v8a/libcrypto_python.so",
+    "lib/arm64-v8a/libpython3.10.so",
+    "lib/arm64-v8a/libsqlite3_python.so",
+    "lib/arm64-v8a/libssl_python.so",
+    "lib/arm64-v8a/libcrypto_chaquopy.so",
+    "lib/arm64-v8a/libssl_chaquopy.so",
+    "lib/arm64-v8a/libsqlite3_chaquopy.so",
+    "lib/arm64-v8a/libchaquopy_java.so"
+  ],
+  "hostLibraries": {},
+  "files": [ ... 每个 .so 与每个 assets/chaquopy/** 的 path/size/sha256 ... ]
+}
+```
+
+`loadOrder` 是 **S12 实测得出的拓扑序**，不是 `Platform.loadNativeLibs()` 的原序。
+`hostLibraries` 为空：8 个库只依赖系统库与彼此（实测），不依赖宿主提供的 `libc++_shared.so`。
+
+**2. 契约层扩展（`RuntimeVerifier`）**
+
+现有 `verifyFiles` 以 `nativeLibraryDir` 为根，**无法覆盖 `assets/**`**。需要：
+
+- `RuntimeManifest.RuntimeFile` 增加「载荷根」概念：`lib/<abi>/…` 相对 `nativeLibraryDir`，
+  `assets/…` 相对模块 APK 的 zip 根；
+- `verifyFiles` 按前缀分派到对应的读取器；
+- 新增 `RuntimeModuleAssets`：用 **S11 选定的公开 API**
+  （`createPackageContext(pkg).getAssets()`）读取，并以 `ZipFile` 为备选。
+
+**3. 宿主适配（`chaquo/Platform.java`）**
+
+```java
+// 现状：context = Init.context(); am = context.getAssets();
+// 改为：模块可用时用模块 context，否则报错（不再回退到宿主 assets，因为已移除）
+Context assetContext = RuntimePython.assetContext();   // 模块 context 或 null
+```
+
+- `am = assetContext.getAssets()` → 读 `chaquopy/build.json` 与 `chaquopy/**`；
+- `loadNativeLibs()` 改为按 `loadOrder` 从模块目录 `System.load` 绝对路径；
+- `getPath()` / `onStart()` 不变（它们只用 `context.getFilesDir()`，仍可用宿主 context）。
+
+**4. 降级（关键，S12 已证必须做）**
+
+| 位置 | 现状 | 改为 |
+| --- | --- | --- |
+| `PyLoader.java:24` | 构造即 `new Loader()` | 惰性：首次真正需要时创建；模块不可用则抛可识别异常 |
+| `PythonSubtitleScriptRuntime.java:14` | 构造即 `new Loader()` | 同上 |
+| `BaseLoader.java:35` | 静态初始化急切 `new PyLoader()` | `PyLoader` 构造不再触发 `Python.start` |
+
+必须保证：**未装模块时应用能启动、能加载配置、能播放**。这是硬验收项。
+
+**5. UI 引导**
+
+`.py` 源在模块缺失时给出明确提示（复用 S0-f 的模块管理页入口），而非静默返回空。
+
+#### 16.29.7 缺点与风险
+
+| 风险 | 说明 | 缓解 |
+| --- | --- | --- |
+| 首次启动解压成本 | 20 个资产、约 12 MB 解压到 `filesDir` | 既有行为不变（现在也解压）；模块化不增加 |
+| `files/chaquopy/` 路径约定 | `LoginStateSync:655` 依赖该前缀 | 保持 `Common.ASSET_DIR` 与解压位置不变 |
+| 模块 context 的生命周期 | `createPackageContext` 返回的 context 需长期持有 | 持有 Application 级引用；模块卸载时失效需重取 |
+| 上游升级 | Chaquopy 升版可能改 `importer.py` 内部 | 只用文档化扩展点（`Platform` 子类）；`initialize(context,…)` 的 context 语义已在源码确认 |
+| 配置加载路径 | `BaseLoader` 静态初始化 | S12 已定位；改为惰性后需回归「JS/Jar 源不受影响」 |
+| 体积口径 | 模块约 21.15 MB（未压缩） | 宿主净减 21.03 MB（压缩口径） |
+
+#### 16.29.8 与现有功能的关系
+
+| 功能 | 影响 |
+| --- | --- |
+| JS 源（`JsLoader`） | **不受影响**（不同 `Loader` 类） |
+| Jar 源（`JarLoader`） | **不受影响** |
+| CAT 源 | **不受影响** |
+| Python 源（`PyLoader`） | 需装模块；未装时给引导 |
+| Python 字幕脚本 | 同上 |
+| 播放（EXO/MPV/IJK） | **不受影响** |
+| 备份/恢复 | `files/chaquopy/` 同步规则保持 |
+
+#### 16.29.9 最小实施步骤
+
+| 步 | 内容 | 验证 |
+| --- | --- | --- |
+| 1 | 契约层支持 `assets/**` 载荷校验（`RuntimeFile` 载荷根 + `RuntimeModuleAssets`） | 单测 |
+| 2 | `Platform.java` 改为从模块 context 读资产 + 按 `loadOrder` 加载库 | 真机：模块可用 |
+| 3 | `PyLoader` / `PythonSubtitleScriptRuntime` 改惰性 + 可用性门禁 | 单测 + 真机 |
+| 4 | `app/build.gradle` 排除 `chaquopy` 资产与 8 个库（`-PpythonBundle=true` 回滚） | 体积实测 |
+| 5 | 插件仓库新增 `python` 模块定义 + 产物（2 ABI） | 产物摘要一致 |
+| 6 | 端到端：装模块 → `.py` 源可用；卸载 → 引导且不崩 | 真机 |
+
+#### 16.29.10 预计需要的验证
+
+| 项 | 判据 |
+| --- | --- |
+| 未装模块启动 | 应用正常启动，加载 JS/Jar 配置成功，能播放 |
+| 未装模块用 `.py` 源 | 给出模块引导，**不崩溃** |
+| 装模块后 `.py` 源 | 与模块化前行为一致 |
+| 库加载来源 | `/proc/self/maps` 显示来自模块目录 |
+| 资产读取来源 | 模块 context 读到 `chaquopy/build.json` |
+| 体积 | 宿主 APK 净减约 21 MB；模块产物约 21 MB |
+| 回滚开关 | `-PpythonBundle=true` 恢复内嵌 |
+| 既有单测 | runtime 156 项 + subtitle 70 项全绿 |
+
+#### 16.29.11 回滚路径
+
+| 层级 | 手段 |
+| --- | --- |
+| 构建期 | `-PpythonBundle=true` 恢复内嵌资产与库 |
+| 运行期 | 模块缺失 → 引导（不崩），JS/Jar 源照常 |
+| 发布期 | `recovery/PLG1-S13/<timestamp>` 标签 |
+| 数据期 | 卸载模块不影响配置；`files/chaquopy/` 可保留 |
+
+**建议：实施（方案 C）。** 两个技术前提（资产读取、无 SONAME 依赖）均已真机证实，
+依赖次序与降级点也已定位。**等待用户明确批准。**
+
+### 16.30 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -1782,6 +1965,7 @@ libcrypto_chaquopy.so, libssl_chaquopy.so, libsqlite3_chaquopy.so, libchaquopy_j
 | **S10** | 无 SONAME 依赖实验（Python 模块化可行性） | ✅ 已交付 |
 | **S11** | 模块资产读取机制对比（选定公开 API） | ✅ 已交付 |
 | **S12** | Python 加载次序实验（契约须拓扑排序） | ✅ 已交付 |
+| **S13** | Python 模块化设计门禁（待批准） | ⏸ 待批准 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
