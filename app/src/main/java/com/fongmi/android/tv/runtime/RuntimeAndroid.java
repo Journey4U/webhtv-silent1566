@@ -303,14 +303,30 @@ public final class RuntimeAndroid {
                 return null;
             }
             try {
-                // The module's AssetManager is rooted at the APK root, and manifest paths are written
-                // relative to that root (assets/chaquopy/...), so the path is used as-is.
                 Context module = context.createPackageContext(packageName, 0);
-                return module.getAssets().open(path);
+                return module.getAssets().open(assetPath(path));
             } catch (PackageManager.NameNotFoundException e) {
                 return null;
             }
         };
+    }
+
+    /**
+     * Converts a manifest path to an {@code AssetManager} path.
+     *
+     * <p>Manifest paths are written relative to the APK root ({@code assets/chaquopy/build.json}), but
+     * {@code AssetManager.open} takes a path relative to the <em>assets</em> directory
+     * ({@code chaquopy/build.json}). Passing the manifest path through unchanged fails with
+     * {@code FileNotFoundException} for every entry — measured on device, all twenty payload files
+     * reported "unreadable" until this strip was added. The sibling {@link #manifestSource()} reads
+     * {@code runtime.json} with no prefix for the same reason.
+     *
+     * <p>Returns {@code null} for a path that is not under {@code assets/}: a package's AssetManager
+     * exposes nothing else, so pretending it could be read would misreport the file as merely missing.
+     */
+    private static String assetPath(String manifestPath) {
+        String normalized = manifestPath.trim();
+        return normalized.startsWith("assets/") ? normalized.substring("assets/".length()) : null;
     }
 
     /** Resolves a host-provided library from the app's own native library directory. */

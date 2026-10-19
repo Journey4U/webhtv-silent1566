@@ -40,6 +40,7 @@ public class RuntimeNoModuleDeviceTest {
             "com.silent.runtime.ijk",
             "com.silent.runtime.sherpa",
             "com.silent.runtime.dv5",
+            "com.silent.runtime.python",
     };
 
     /** True when no module is installed, i.e. the fresh-install configuration. */
@@ -225,7 +226,7 @@ public class RuntimeNoModuleDeviceTest {
         // Kept in step with RuntimeCompatibility.PACKAGES. A module missing here would be silently
         // untested: the fresh-install checks above iterate MODULE_PACKAGES, so an omission makes
         // them pass while a module is in fact installed.
-        for (String id : new String[]{"mpv", "ijk", "sherpa", "dv5"}) {
+        for (String id : new String[]{"mpv", "ijk", "sherpa", "dv5", "python"}) {
             String pkg = RuntimeCompatibility.packageName(id);
             assertNotNull("host must know the package for module: " + id, pkg);
             assertTrue(pkg, pkg.startsWith("com.silent.runtime."));

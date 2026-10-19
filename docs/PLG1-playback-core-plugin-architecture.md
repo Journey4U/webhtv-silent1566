@@ -3013,7 +3013,90 @@ reader 不该去猜。
 
 **累计真机验证**：runtime 包 82 项（本阶段为纯 JVM 单测，不增加真机项）。
 
-### 16.44 后续阶段
+### 16.44 S27b 已交付（2026-10-19）：Python 构建期排除 + 端到端验证
+
+**范围**：S13 门禁六步计划的**第 4 步与第 6 步**——构建期排除，
+以及「装模块可用、卸载不崩」的双向验证。
+
+#### 16.44.1 实施
+
+`app/build.gradle` 加排除，**两半一起走**：8 个原生库与 `assets/chaquopy` 载荷树。
+它们来源不同，排除机制也不同：
+
+| 部分 | 来源 | 排除方式 |
+| --- | --- | --- |
+| 8 个库 | `chaquo` 模块的 jniLibs | `packaging.jniLibs.excludes` |
+| `assets/chaquopy/**` | assets | `androidResources.ignoreAssetsPatterns` |
+
+回滚开关：`-PpythonBundle=true`。
+
+#### 16.44.2 体积实测（全量重打）
+
+| 构建 | 排除前 | 排除后 | 减少 |
+| --- | --- | --- | --- |
+| arm64 | 100.6 MiB | **80.6 MiB** | **20.05 MiB** |
+| v7a | 91.4 MiB | **75.3 MiB** | **16.08 MiB** |
+
+两个 ABI 的 `chaquopy`/`python` 条目**均归零**。
+
+**累计**：arm64 从起点 191.1 MiB 降到 **80.6 MiB**，累计减少 **110.5 MiB**。
+
+#### 16.44.3 发现并修复一个真实 bug（本阶段最重要的产出）
+
+端到端测试首轮即失败，20 个载荷文件**全部**报「declared payload is unreadable」：
+
+```text
+verify ok=false problem=declared payload is unreadable: assets/chaquopy/app.imy; ... (20 条)
+```
+
+**根因**：`AssetManager.open()` 的路径是**相对 `assets/` 目录**，不是相对 APK 根。
+清单里写的是 `assets/chaquopy/build.json`（相对 APK 根，与其它模块一致），
+直接传给 `AssetManager` 就是错的路径 → `FileNotFoundException` → 报「unreadable」。
+
+对照证据：兄弟方法 `manifestSource()` 读清单时用的正是 `"runtime.json"`（**无前缀**）。
+
+**修复**：`RuntimeAndroid` 加 `assetPath()`，剥掉 `assets/` 前缀；
+非 `assets/` 下的路径返回 `null`（包 context 的 AssetManager 只暴露 assets，
+假装能读会让文件被误报为「缺失」而非「不支持」）。
+
+**为什么单测没发现**：S27a 的单测用**自己的内存 reader**，
+它拿到的是清单原始路径，与真实 `AssetManager` 的语义不同。
+**只有真机端到端能发现这类「接口语义不匹配」**——这与 S21/S27a 的教训同源：
+验证必须覆盖真实的执行路径，而不只是被替换的替身。
+
+#### 16.44.4 双向真机验证
+
+新增 `RuntimePythonModuleDeviceTest`（**6 项**）：
+
+| 用例 | 断言 |
+| --- | --- |
+| `moduleVerifiesThroughTheLoader` | **经生产加载器路径**校验通过（这是首轮抓到 bug 的那一项） |
+| `manifestDeclaresTheTopologicalOrder` | 8 个库按依赖顺序声明 |
+| `everyDeclaredLibraryIsPresent` | 模块目录内文件齐全 |
+| `payloadIsReadableThroughTheModuleContext` | 载荷经模块 context 可读 |
+| `hostNoLongerShipsTheRuntime` | 宿主不再自带库与载荷（防止回退） |
+| `runtimeReportsAvailableWithTheModuleInstalled` | 可用性探测返回 true |
+
+**结果**：
+
+| 场景 | 结果 |
+| --- | --- |
+| **装模块** | `RuntimePythonModuleDeviceTest` **OK (6 tests)**；证据 `verify ok=true problem=` |
+| 装模块·全包 | **OK (88 tests)** |
+| **卸载模块（零模块态）** | **OK (88 tests)**——降级不崩 |
+
+`hostNoLongerShipsTheRuntime` 是关键守卫：没有它，上面的测试可能对着内嵌副本通过，
+什么也没证明。
+
+#### 16.44.5 排除为何必须先修 bug
+
+若只做排除而不修 reader，用户装模块会得到**被拒的模块**，
+而宿主又不带内嵌副本 → Python 完全不可用。即**排除本身会造成回归**。
+因此这两项属同一单元，一起验证、一起提交。
+
+**累计真机验证**：runtime 包 **88 项**（82 + 6 新增）。
+
+### 16.45 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -3059,6 +3142,7 @@ reader 不该去猜。
 | **S25** | Python 第 2 步：Platform 从模块读资产 + 拓扑序加载 | ✅ 已交付 |
 | **S26** | Python 第 3 步：惰性化 + 可用性门禁 | ✅ 已交付 |
 | **S27a** | 修复 PayloadReader 接线缺口 | ✅ 已交付 |
+| **S27b** | Python 构建期排除 + 端到端验证（88 项） | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。

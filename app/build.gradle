@@ -140,6 +140,30 @@ android {
         packaging.jniLibs.excludes.add('**/libsherpa-onnx-jni.so')
     }
 
+    // The Python runtime (Chaquopy) is delivered as an installable runtime module too.
+    //
+    // Two halves have to go together, because the runtime needs both: eight native libraries, and
+    // the interpreter's own payload under assets/chaquopy/ (stdlib, requirements, bootstrap). The
+    // libraries come from the chaquo module's jniLibs, so packaging.jniLibs.excludes reaches them;
+    // the payload is assets, so it needs ignoreAssetsPatterns instead.
+    //
+    // RuntimePython points Chaquopy at the module and reports the runtime unavailable when neither
+    // source exists, and PyLoader/PythonSubtitleScriptRuntime create the bridge lazily, so removing
+    // the bundled copy degrades Python sources rather than breaking configuration loading.
+    //
+    // Pass -PpythonBundle=true to restore the previous self-contained build.
+    def pythonBundle = (project.findProperty('pythonBundle') ?: 'false').toString().toBoolean()
+    if (!pythonBundle) {
+        // add() rather than += : on AGP 9.x the collection is a read-only ListProperty, so the
+        // get-then-set form fails with "Cannot set the value of read-only property".
+        ['libpython3.10.so', 'libchaquopy_java.so', 'libcrypto_python.so', 'libsqlite3_python.so',
+         'libssl_python.so', 'libcrypto_chaquopy.so', 'libsqlite3_chaquopy.so',
+         'libssl_chaquopy.so'].each { name ->
+            packaging.jniLibs.excludes.add("**/${name}")
+        }
+        androidResources.ignoreAssetsPatterns.add('chaquopy')
+    }
+
     // The DV5 GPU renderer is delivered as an installable runtime module too.
     //
     // Unlike IJK and sherpa this library is produced by CMake rather than coming from the jniLibs
