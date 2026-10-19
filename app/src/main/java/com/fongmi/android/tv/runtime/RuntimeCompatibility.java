@@ -23,7 +23,11 @@ public final class RuntimeCompatibility {
             "mpv-jni-ffmpeg-shared-v1",
             // The IJK module (P4). Its libraries depend only on system libraries, so there is no
             // host-library digest to keep in sync.
-            "ijk-jni-v1"
+            "ijk-jni-v1",
+            // The DV5 GPU renderer module. Verified with readelf that its library depends only on
+            // system libraries (libandroid/liblog/libmediandk/libvulkan/libdl/libm/libc) and carries
+            // a soname, so like IJK it needs no host-library digest.
+            "exo-dv5-renderer-v1"
     )));
 
     /**
@@ -37,7 +41,8 @@ public final class RuntimeCompatibility {
     private static final Map<String, String> PACKAGES = Map.of(
             "sherpa", "com.silent.runtime.sherpa",
             "mpv", "com.silent.runtime.mpv",
-            "ijk", "com.silent.runtime.ijk"
+            "ijk", "com.silent.runtime.ijk",
+            "dv5", "com.silent.runtime.dv5"
     );
 
     private RuntimeCompatibility() {

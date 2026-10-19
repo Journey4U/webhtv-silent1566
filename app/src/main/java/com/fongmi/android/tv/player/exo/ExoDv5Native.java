@@ -5,6 +5,8 @@ import android.view.Surface;
 
 import androidx.annotation.Nullable;
 
+import java.io.File;
+
 /** JNI boundary for the independent Exo DV5 renderer. */
 final class ExoDv5Native {
 
@@ -66,6 +68,21 @@ final class ExoDv5Native {
     private static LoadResult loadLibrary() {
         if (Build.VERSION.SDK_INT < ExoDv5GpuMappingPolicy.MIN_GPU_MAPPING_API) {
             return new LoadResult(false, "api-below-26");
+        }
+        // Prefer a module-delivered copy. System.loadLibrary searches only the host's own
+        // nativeLibraryDir, so a module's library is invisible to it; RuntimeDv5 maps the bare name
+        // to the module's file so it can be loaded by absolute path. Returns null when no module is
+        // installed, which is the case in a build that still bundles the library.
+        try {
+            File resolved = com.fongmi.android.tv.runtime.RuntimeDv5.resolve(
+                    com.fongmi.android.tv.runtime.RuntimeDv5.LIBRARY);
+            if (resolved != null && resolved.isFile()) {
+                System.load(resolved.getAbsolutePath());
+                return new LoadResult(true, "loaded-module");
+            }
+        } catch (Throwable error) {
+            // Fall through to the bundled copy: a module that is present but unloadable must not
+            // make the renderer worse off than not having the module at all.
         }
         try {
             System.loadLibrary("exo_dovi_renderer");

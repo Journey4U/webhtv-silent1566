@@ -2563,7 +2563,83 @@ S20 改的是打包内容，却只跑了与该资产直接相关的测试；
 本阶段的全包运行 `OK (78 tests)` 即为**全部**。
 后续统一以「runtime 包 78 项全绿」为口径，不再逐阶段累加。
 
-### 16.38 后续阶段
+### 16.38 S22 已交付（2026-10-19）：DV5 宿主侧接入 + 发现 CI 构建缺口
+
+**范围**：实施 DV5 渲染器模块化的**宿主侧**部分（契约、resolver、接入、单测），
+并核实插件仓库能否产出该模块。**本阶段不加构建期排除**——理由见下。
+
+#### 16.38.1 已实施（宿主侧）
+
+| 文件 | 改动 |
+| --- | --- |
+| `RuntimeCompatibility.java` | 白名单加 `exo-dv5-renderer-v1`；包名表加 `dv5 → com.silent.runtime.dv5` |
+| `RuntimeDv5.java`（新增） | 复用 `RuntimeIjk` 的 resolver 模式：`install`/`uninstall`/`resolve`/`isAvailable` |
+| `ExoDv5Native.java` | `loadLibrary()` 先问模块（`System.load` 绝对路径），再回退裸名 |
+| `App.java` | `onCreate` 接入 `RuntimeDv5.install(...)` |
+| `RuntimeDv5Test.java`（新增） | 10 项单测 |
+
+**关键设计点（与 IJK 的差异）**：DV5 渲染器是**可选增强**而非播放引擎。
+`ExoDv5GpuMappingPolicy` 已有多条降级路线，`ExoUtil` 用 `catch (Throwable ignored)` 包裹。
+因此 resolver 在模块缺失时**返回 null 而非抛异常**，让调用方回退到裸名加载。
+模块存在但加载失败时也**回退**——「装了模块反而更差」是不可接受的。
+
+**验证**：
+
+| 项 | 结果 |
+| --- | --- |
+| `RuntimeDv5Test` | **10 项全绿**（tests=10, failures=0, errors=0, skipped=0） |
+| 全包真机回归 | **OK (78 tests)** |
+| 未装模块时行为 | `hostShipsLibrary=true probeAvailable=false` —— 正确回退到内嵌库 |
+
+**本阶段不加构建期排除**：`dv5` 模块产物**尚不存在**（`webhtv-plugins/dist` 只有
+ijk/mpv/sherpa）。若此时排除，用户会失去 DV5 能力却无处可装——正是 S16 踩过的坑。
+排除必须与产物**同步落地**。
+
+#### 16.38.2 发现的 CI 构建缺口（重要）
+
+核实插件仓库能否产出 `dv5` 模块时发现：**现有 CI 路径不适用于 dv5**。
+
+| 模块 | 库的来源 | CI 克隆 WebHTV 后可否打包 |
+| --- | --- | --- |
+| sherpa | `app/src/main/jniLibs/arm64-v8a/libsherpa-onnx-jni.so`（**git 跟踪**） | ✅ |
+| mpv | `app/src/arm64_v8a/assets/mpv-libs/arm64-v8a/libmpv.so`（**git 跟踪**） | ✅ |
+| ijk | `app/src/main/jniLibs/arm64-v8a/libijkffmpeg.so`（**git 跟踪**） | ✅ |
+| **dv5** | **CMake 从 `app/src/main/cpp/exo_dovi_renderer.cpp` + `third_party/exo-dv5-native/prebuilt/*.a` 构建** | ❌ **无跟踪的 `.so` 副本** |
+
+即：前三个模块的库都在 git 跟踪路径下，CI 克隆源码即可打包；而
+`libexo_dovi_renderer.so` 是**构建产物**，仓库里只有 `.cpp` 源码与静态库。
+
+**已实测的可行路径**：CMake 可脱离 Gradle 独立构建该库。
+
+| 步骤 | 命令 | 实测结果 |
+| --- | --- | --- |
+| 配置 | `cmake -S app/src/main/cpp -G Ninja -DCMAKE_TOOLCHAIN_FILE=<ndk>/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26` | ✅ 成功 |
+| 构建 | `cmake --build <dir> --target exo_dovi_renderer` | ✅ 产出 `libexo_dovi_renderer.so` |
+| strip | `llvm-strip --strip-unneeded` | ✅ 21.27 → 9.14 MiB |
+
+**产物可比性验证**（决定 CI 方案是否可靠）：
+
+| 项 | 独立 CMake 构建 | Gradle 构建 |
+| --- | --- | --- |
+| SONAME | `libexo_dovi_renderer.so` | `libexo_dovi_renderer.so` |
+| DT_NEEDED | 7 个系统库 | 7 个系统库（**完全一致**） |
+
+产物**不逐字节一致**（9.14 vs 9.26 MiB，NDK 28.2 vs 29.0 及 strip 参数差异），
+这不影响正确性：模块产物只需**自身摘要**与 catalog 一致，无需与宿主产物相同。
+
+**待定方案（需在插件仓库侧实施）**：
+
+| 方案 | 做法 | 评价 |
+| --- | --- | --- |
+| **A** | CI 中增加 CMake 构建步骤（静态库已跟踪，104 MB） | **推荐**：无需入库 `.so`，与宿主源码同源 |
+| B | 把 `.so` 提交到跟踪路径（如 mpv 做法） | 需入库 ~16.5 MB（9.26 + 6.82 MiB），且与源码可能失同步 |
+| C | 手工构建后手动上传 Release | 不可复现，与现有 CI 校验（摘要/大小）冲突 |
+
+方案 A 的 CI 改动属**插件仓库**范围，需单独授权。
+
+**累计真机验证**：runtime 包 78 项全绿。
+
+### 16.39 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -2603,6 +2679,7 @@ S20 改的是打包内容，却只跑了与该资产直接相关的测试；
 | **S19** | forcetech 在 arm64 整体失效取证（含既有缺陷） | ✅ 已交付 |
 | **S20** | arm64 排除落地 + 修正 S17/S19 错误结论 | ✅ 已交付 |
 | **S21** | 全包回归（78 项）+ 修正测试隔离缺陷 | ✅ 已交付 |
+| **S22** | DV5 宿主侧接入 + 发现 CI 构建缺口 | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。

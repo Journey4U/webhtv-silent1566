@@ -134,6 +134,12 @@ public class App extends Application implements Application.ActivityLifecycleCal
         // installing the module later still works.
         com.fongmi.android.tv.runtime.RuntimeIjk.install(
                 com.fongmi.android.tv.runtime.RuntimeAndroid.packageInfo());
+        // Same idea for the DV5 GPU renderer: it loads by bare name too, so point it at an installed
+        // module. Unlike IJK this renderer is optional — ExoDv5GpuMappingPolicy has fallback routes
+        // and ExoUtil catches renderer-construction failures — so a missing module degrades one
+        // Dolby Vision route rather than breaking playback.
+        com.fongmi.android.tv.runtime.RuntimeDv5.install(
+                com.fongmi.android.tv.runtime.RuntimeAndroid.packageInfo());
         registerActivityLifecycleCallbacks(this);
         registerContentHandlers();
         resumeBackgroundServices();
