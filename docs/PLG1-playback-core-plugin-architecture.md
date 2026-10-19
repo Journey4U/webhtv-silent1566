@@ -1556,7 +1556,48 @@ app/src/mobile/assets/   ← 空
 **验证**：源集目录逐一核对（上表），并用 zip 逐条目统计确认 exo-ass 全部
 位于 debug 源集。
 
-### 16.25 后续阶段
+### 16.25 S9 已交付（2026-10-19）：资产重定向实验，Python 模块化可行性
+
+**范围**：验证 `AssetManager.addAssetPath` 能否让模块资产对宿主可见——这决定
+Python 运行时（Chaquopy，20.9 MB，剩余最大可拆项）能否模块化。
+
+**结论：资产可以重定向，且 Python 具备模块化的结构条件。**
+
+**实验（`RuntimeAssetPathDeviceTest`，真机 OK (3 tests)）**：
+
+| 测试 | 结果 | 意义 |
+| --- | --- | --- |
+| `hostAssetsAreReadable` | ✅ | 探针本身有效 |
+| `moduleAssetsAreNotVisibleByDefault` | ✅（单独运行） | 模块资产默认不可见 |
+| `addAssetPathMakesModuleAssetsReadable` | ✅ | **`addAssetPath` 确实生效** |
+
+第三条是决定性证据：把模块 APK 加进宿主 `AssetManager` 后，
+模块的 `assets/runtime.json` 可被宿主读取；而该资产宿主自己没有，
+所以成功不可能来自宿主副本。
+
+**为什么 Python 与 thunder 的结论不同（关键区别）**：
+
+| | thunder / jianpian | Python（Chaquopy） |
+| --- | --- | --- |
+| 资产定位 | 厂商 AAR 二进制 | **`chaquo/Platform.java` 是仓库内源码** |
+| 原生库加载 | 厂商 AAR 二进制（`XLLoader`） | **同一个 `Platform.loadNativeLibs()`** |
+| 可否改 | 否 | **是** |
+
+`Platform.java` 同时控制 `getPath()`/`extractAssets()`（资产）与
+`loadNativeLibs()`（原生库），两者都在仓库内。因此 Python 模块化**不需要**
+S7 那条走不通的「预加载满足裸名查找」路径——可以直接改成从模块目录加载。
+
+**测试顺序陷阱（已处理）**：`addAssetPath` 是**进程级且不可撤销**的。
+同进程内先跑的决定性测试会把模块 APK 加进去，使「默认不可见」的基线失效。
+首轮因此报 1 个失败，单独运行该基线则通过。已改为在该前提下 `assumeTrue` 跳过
+（而非假失败），并在类注释中写明本类需单独运行。
+
+**对后续工作的意义**：Python 是**下一个可拆项**，预计收益约 20.9 MB
+（`assets/chaquopy` 12.1 + `libpython3.10` 3.5 + `libcrypto_python` 3.7 +
+`libsqlite3_python` 0.89 + `libssl_python` 0.62 + `libchaquopy_java` 0.15）。
+本次只验证了可行性，未实施。
+
+### 16.26 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -1583,6 +1624,7 @@ app/src/mobile/assets/   ← 空
 | **S6-b** | 内核过滤的真机验证 | ✅ 已交付 |
 | **S7** | 预加载去重实验（划定模块化边界） | ✅ 已交付 |
 | **S8** | 体积口径修正（debug 专用资产） | ✅ 已交付 |
+| **S9** | 资产重定向实验（Python 模块化可行性） | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
