@@ -34,6 +34,50 @@ public class Platform extends Python.Platform {
     private static final String[] OBSOLETE_FILES = {"app.zip", "requirements.zip", "chaquopy.mp3", "stdlib.mp3", "chaquopy.zip", "lib-dynload", "stdlib.zip", "bootstrap.zip", "stdlib-common.zip", "ticket.txt"};
     private static final String[] OBSOLETE_CACHE = {"AssetFinder"};
 
+    /**
+     * Where the runtime's assets and native libraries come from.
+     *
+     * <p>Normally both are bundled in the host APK, so the host's own context and
+     * {@code nativeLibraryDir} serve. When the runtime is delivered as an installable module they
+     * live in the module's APK instead, and the host has to read them through the module's context
+     * and load its libraries by absolute path.
+     *
+     * <p>Declared here rather than referenced from the host's runtime package because this module
+     * cannot depend on it: {@code :app} depends on {@code :chaquo}, so a reference back would be a
+     * cycle. The host installs an implementation at startup, exactly as it does for the other
+     * module-aware seams.
+     */
+    public interface RuntimeModule {
+        /** Context whose {@code getAssets()} exposes the runtime's {@code chaquopy/**} tree. */
+        Context assetContext();
+
+        /**
+         * Absolute paths of the native libraries to load, in dependency order.
+         *
+         * <p>Order matters: the interpreter must be mapped before the extension modules that depend
+         * on it, and several of Chaquopy's own libraries depend on each other.
+         *
+         * @return the paths, or {@code null} when no module is installed
+         */
+        List<String> nativeLibraryPaths();
+    }
+
+    private static volatile RuntimeModule runtimeModule;
+
+    /**
+     * Installs the module provider. Called once by the host at startup.
+     *
+     * <p>Safe to call repeatedly; the last value wins so a module installed later is picked up.
+     */
+    public static void setRuntimeModule(RuntimeModule module) {
+        runtimeModule = module;
+    }
+
+    /** The installed provider, or {@code null} when the runtime is not modularised. */
+    public static RuntimeModule getRuntimeModule() {
+        return runtimeModule;
+    }
+
     private final SharedPreferences sp;
     private final JSONObject buildJson;
     private final AssetManager am;
@@ -43,7 +87,12 @@ public class Platform extends Python.Platform {
     public Platform() {
         this.context = Init.context();
         this.sp = context.getSharedPreferences(Common.ASSET_DIR, Context.MODE_PRIVATE);
-        this.am = context.getAssets();
+        // Assets may come from the module rather than from this APK. The extraction target and the
+        // preferences file stay on the host: the host owns its own files directory, and the module's
+        // data directory is not writable by us.
+        RuntimeModule module = runtimeModule;
+        Context assetSource = module == null ? null : module.assetContext();
+        this.am = (assetSource == null ? context : assetSource).getAssets();
         try {
             try (InputStream is = am.open(Common.ASSET_DIR + "/" + Common.ASSET_BUILD_JSON)) {
                 buildJson = new JSONObject(streamToString(is));
@@ -172,6 +221,21 @@ public class Platform extends Python.Platform {
     }
 
     private void loadNativeLibs() throws JSONException {
+        // A module, when installed, supplies the exact paths and their dependency order. The order
+        // is not cosmetic: measured from the APK, libcrypto_chaquopy depends on libcrypto_python,
+        // libssl_chaquopy on libssl_python, libsqlite3_chaquopy on libsqlite3_python, and
+        // libssl_python on libcrypto_python, while the bare-name sequence below loads several of
+        // those dependents first. With bare names the linker still finds them by searching the
+        // namespace's library paths, but a module's directory is not on that path, so an
+        // absolute-path load has to see each dependency already mapped.
+        RuntimeModule module = runtimeModule;
+        List<String> paths = module == null ? null : module.nativeLibraryPaths();
+        if (paths != null && !paths.isEmpty()) {
+            for (String path : paths) {
+                System.load(path);
+            }
+            return;
+        }
         String pythonVer = buildJson.getString("python_version");
         for (String lib : new String[]{"crypto_chaquopy", "ssl_chaquopy", "sqlite3_chaquopy", "python" + pythonVer, "chaquopy_java"}) {
             System.loadLibrary(lib);

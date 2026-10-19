@@ -140,6 +140,18 @@ public class App extends Application implements Application.ActivityLifecycleCal
         // Dolby Vision route rather than breaking playback.
         com.fongmi.android.tv.runtime.RuntimeDv5.install(
                 com.fongmi.android.tv.runtime.RuntimeAndroid.packageInfo());
+        // The Python runtime (Chaquopy) reads its payload through one context: assets, extraction
+        // root and native libraries. A module-delivered copy therefore needs a context that reads the
+        // module's assets while still writing into the host's files directory. Must run before
+        // anything touches com.chaquo.python, whose Platform reads the build manifest and loads the
+        // libraries from its constructor.
+        com.fongmi.android.tv.runtime.RuntimePython.install(
+                com.fongmi.android.tv.runtime.RuntimeAndroid.packageInfo(),
+                this,
+                com.fongmi.android.tv.runtime.RuntimeAndroid.loader(
+                        com.fongmi.android.tv.runtime.RuntimeAndroid.store()),
+                com.fongmi.android.tv.runtime.RuntimeAbi.resolve(
+                        BuildConfig.FLAVOR_abi, android.os.Build.SUPPORTED_ABIS));
         registerActivityLifecycleCallbacks(this);
         registerContentHandlers();
         resumeBackgroundServices();

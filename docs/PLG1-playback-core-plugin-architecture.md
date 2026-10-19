@@ -2775,7 +2775,95 @@ private static final String[] MODULE_PACKAGES = {
 
 **累计真机验证**：runtime 包 82 项（本阶段为纯 JVM 单测，不增加真机项）。
 
-### 16.41 后续阶段
+### 16.41 S25 已交付（2026-10-19）：Python 第 2 步——Platform 从模块读资产、按拓扑序加载
+
+**范围**：S13 门禁六步计划的**第 2 步**——让 Chaquopy 的 `Platform` 能从模块读取资产
+并按 manifest 声明的拓扑序加载库。
+
+#### 16.41.1 关键约束（决定了设计）
+
+**约束 1：`chaquo` 模块不能引用 app 的 `runtime` 包。**
+`settings.gradle` 中 `:app` 依赖 `:chaquo`，反向引用会形成循环依赖。
+故在 `chaquo` 侧定义注入缝 `Platform.RuntimeModule`，由宿主在启动时安装实现——
+与既有的 `HostLibraries` / `ManifestSource` 同一模式。
+
+**约束 2：宿主无法写模块的数据目录。**
+Chaquopy 的 `initialize(context, …)` 用**同一个 context** 决定四件事
+（`importer.py` 实测）：
+
+| context 用途 | 能否用模块 context |
+| --- | --- |
+| `getAssets()` 读 `chaquopy/**` | **需要**——资产在模块 APK 内 |
+| `getFilesDir()` 解压根（需可写） | **不能**——模块数据目录宿主不可写 |
+| `getSharedPreferences()` 解压记账 | **不能**——同上 |
+| `getApplicationInfo().nativeLibraryDir` | 无关——实测**赋值后从未被读取** |
+
+因此用 `ContextWrapper` **只覆盖 `getAssets()`**，其余仍走宿主。
+若整体换成模块 context，解压会因权限失败。
+
+**约束 3：库的加载次序是拓扑序，不是 Chaquopy 的原序。**
+S12 实测的依赖图与 `Platform.loadNativeLibs()` 的原序不一致
+（`crypto_chaquopy` 在 `crypto_python` 之前等）。裸名时靠搜索路径兜住，
+绝对路径加载则必须依赖已映射，故 manifest 必须声明拓扑序。
+
+#### 16.41.2 实施
+
+| 文件 | 改动 |
+| --- | --- |
+| `chaquo/Platform.java` | 新增 `RuntimeModule` 缝（`assetContext()` / `nativeLibraryPaths()`）；`am` 改从缝取；`loadNativeLibs()` 优先按声明路径 `System.load`，无模块时回退原裸名序列 |
+| `RuntimePython.java`（新增） | 校验模块 → 解析库路径 → 用 `createPackageContext` 取模块 assets → 安装 `ContextWrapper` provider |
+| `App.java` | `onCreate` 接入 `RuntimePython.install(...)`（须在触碰 `com.chaquo.python` 之前） |
+
+**`createPackageContext` 而非 `addAssetPath`**：后者是隐藏 API 且**不可逆地**
+改动进程级 `AssetManager`，模块卸载后难以恢复（S9/S11 已论证）。
+
+**纯函数抽取**：`resolveLibraryPaths(libraryDir, manifest)` 不依赖 Android API，
+使次序规则可在纯 JVM 单测——与 `RuntimeSherpa.prepare` 同一做法。
+
+#### 16.41.3 验证
+
+新增 `RuntimePythonTest`（**10 项**）：
+
+| 用例 | 断言 |
+| --- | --- |
+| `resolvesEveryLibraryInTheDeclaredOrder` | 8 个库按声明次序解析 |
+| `preservesTheDeclaredOrderRatherThanSorting` | **不重排**——只有 manifest 知道依赖图 |
+| `failsWhenALibraryIsMissing` | 缺库则失败 |
+| `failsWithoutALibraryDirectory` | 目录不可用则失败 |
+| `failsWithoutAManifest` | 清单不可用则失败 |
+| `acceptsASingleLibraryWithoutALoadOrder` | 单库模块无需显式 loadOrder |
+| `availabilityIsTrueWhenEitherSourceExists` | 可用性规则 |
+| `moduleIsInstalledOnlyWhenItsDirectoryExists` | 查平台而非注册表 |
+| `contractAndPackageNameAreRegistered` | 契约与包名已登记 |
+| `uninstallClearsTheProvider` | 卸载后恢复内嵌行为 |
+
+**单测**：runtime 包 **186 项全绿**（含新增 10 项）。
+全仓库 5263 项中 7 项失败，**均为既有失败**（`MpvFontConfigTest`、
+`MpvHlsCacheCoordinatorTest`、`ReaderPlaybackRoutingSourceTest`×2、
+`TmdbUIAdapterTest`、`TmdbSourceOnlyInteractionTest`、`WebThemeTokenSourceTest`），
+与 PLG1 无关，按 `AGENTS.md` §2 只报告不修。
+
+#### 16.41.4 发现的 CI 缺口（与 DV5 同类但更重）
+
+Python 的 8 个库与 `assets/chaquopy/**` **全部是构建产物**（`git ls-files` 确认未跟踪），
+由 Chaquopy Gradle 插件产出，依赖：
+
+- 本机 Python 3.10（`local.properties` 的 `chaquopyBuildPython=G:/Python310/python.exe`）
+- `pip install -r requirements.txt`（lxml / ujson / pyquery / requests / certifi /
+  cachetools / pycryptodome / beautifulsoup4）——**需要网络**
+
+即插件仓库的 CI 若要产出 `python` 模块，需在构建机上准备 Python 3.10 与 pip 网络访问，
+比 DV5 的 CMake 缺口更重。**待定方案**（需单独授权）：
+
+| 方案 | 做法 | 评价 |
+| --- | --- | --- |
+| **A** | CI 增加 Python 3.10 + pip 步骤，再跑 Chaquopy 构建 | **推荐**：与宿主同源，无签入二进制 |
+| B | 把 8 个库与 `assets/chaquopy/**` 提交到跟踪路径 | 需入库约 21 MB；且与 Chaquopy 版本可能失同步 |
+| C | 手工构建后手动上传 | 不可复现，与 CI 的摘要校验冲突 |
+
+**累计真机验证**：runtime 包 82 项（本阶段为纯 JVM 单测，不增加真机项）。
+
+### 16.42 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -2818,6 +2906,7 @@ private static final String[] MODULE_PACKAGES = {
 | **S22** | DV5 宿主侧接入 + 发现 CI 构建缺口 | ✅ 已交付 |
 | **S23** | DV5 构建期排除 + 双向验证（82 项） | ✅ 已交付 |
 | **S24** | Python 第 1 步：契约层支持 assets 载荷校验 | ✅ 已交付 |
+| **S25** | Python 第 2 步：Platform 从模块读资产 + 拓扑序加载 | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
