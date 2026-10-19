@@ -1,5 +1,7 @@
 package com.fongmi.android.tv.subtitle.source;
 
+import com.fongmi.android.tv.App;
+import com.fongmi.android.tv.runtime.RuntimePython;
 import com.fongmi.chaquo.Loader;
 import com.fongmi.chaquo.Spider;
 
@@ -7,16 +9,60 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class PythonSubtitleScriptRuntime implements SubtitleScriptRuntime {
 
-    private final Loader loader;
+    /**
+     * Created on first use rather than in the constructor.
+     *
+     * <p>{@code new Loader()} calls {@code Python.start}, which needs the runtime's payload, and this
+     * runtime is constructed while the subtitle provider registry is being set up. Doing it eagerly
+     * would make a build without the runtime fail during registry construction rather than reporting
+     * the Python subtitle feature as unavailable.
+     */
+    private volatile Loader loader;
     private final ConcurrentHashMap<String, Spider> spiders;
 
     public PythonSubtitleScriptRuntime() {
-        this(new Loader());
+        this.spiders = new ConcurrentHashMap<>();
     }
 
+    /**
+     * Uses an already-created bridge. Kept for tests, which supply a stand-in so no Python starts.
+     *
+     * <p>The bridge is treated as pre-resolved, so no availability check runs: the caller has
+     * already decided the runtime is usable.
+     */
     PythonSubtitleScriptRuntime(Loader loader) {
         this.loader = loader;
         this.spiders = new ConcurrentHashMap<>();
+    }
+
+    /**
+     * Whether Python subtitle scripts can be used at all on this build.
+     *
+     * <p>False when neither an installed module nor a bundled runtime is present, in which case
+     * callers should report the feature as unavailable instead of attempting to start Python.
+     */
+    public static boolean isAvailable() {
+        return RuntimePython.isRuntimeAvailable(App.get());
+    }
+
+    /**
+     * The bridge, created on first use.
+     *
+     * @throws IllegalStateException when no runtime is available, so the caller reports the feature
+     *     rather than a null-pointer failure
+     */
+    private Loader loader() {
+        Loader current = loader;
+        if (current != null) return current;
+        synchronized (this) {
+            current = loader;
+            if (current == null) {
+                if (!isAvailable()) throw new IllegalStateException("Python 模块未安装");
+                current = new Loader();
+                loader = current;
+            }
+            return current;
+        }
     }
 
     @Override
@@ -29,7 +75,7 @@ public final class PythonSubtitleScriptRuntime implements SubtitleScriptRuntime 
         }
         Spider previous = spiders.remove(sourceKey);
         destroy(previous);
-        Spider spider = loader.spider(scriptPath);
+        Spider spider = loader().spider(scriptPath);
         spiders.put(sourceKey, spider);
         try {
             return spider.subtitleInit(config);

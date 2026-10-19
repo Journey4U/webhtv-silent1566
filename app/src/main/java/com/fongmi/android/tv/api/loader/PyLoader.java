@@ -3,6 +3,7 @@ package com.fongmi.android.tv.api.loader;
 import android.text.TextUtils;
 
 import com.fongmi.android.tv.App;
+import com.fongmi.android.tv.runtime.RuntimePython;
 import com.fongmi.chaquo.Loader;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderDebug;
@@ -16,12 +17,50 @@ public class PyLoader {
     private static final String PY_TAG = "python-spider";
 
     private final ConcurrentHashMap<String, Spider> spiders;
-    private final Loader loader;
+    /**
+     * Created on first use rather than in the constructor.
+     *
+     * <p>{@code new Loader()} calls {@code Python.start}, which needs the runtime's payload. The
+     * constructor is reached from {@code BaseLoader}'s static initialiser, so doing this eagerly would
+     * make a build without the runtime fail while loading configuration rather than merely reporting
+     * the Python feature as unavailable. Creating it lazily keeps that failure inside the one call
+     * that actually needs Python.
+     */
+    private volatile Loader loader;
     private volatile String recent;
 
     public PyLoader() {
         spiders = new ConcurrentHashMap<>();
-        loader = new Loader();
+    }
+
+    /**
+     * Whether Python sources can be used at all on this build.
+     *
+     * <p>False when neither an installed module nor a bundled runtime is present, in which case
+     * callers should report the feature as unavailable instead of attempting to start Python.
+     */
+    public static boolean isAvailable() {
+        return RuntimePython.isRuntimeAvailable(App.get());
+    }
+
+    /**
+     * The bridge, created on first use.
+     *
+     * @throws IllegalStateException when no runtime is available, so the caller reports the feature
+     *     rather than a null-pointer failure
+     */
+    private Loader loader() {
+        Loader current = loader;
+        if (current != null) return current;
+        synchronized (this) {
+            current = loader;
+            if (current == null) {
+                if (!isAvailable()) throw new IllegalStateException("Python 模块未安装");
+                current = new Loader();
+                loader = current;
+            }
+            return current;
+        }
     }
 
     public void clear() {
@@ -44,7 +83,7 @@ public class PyLoader {
     public Spider getSpider(String key, String api, String ext) {
         return spiders.computeIfAbsent(key, k -> {
             try {
-                Spider spider = loader.spider(api);
+                Spider spider = loader().spider(api);
                 spider.siteKey = key;
                 spider.init(App.get(), normalizeExt(ext));
                 return spider;

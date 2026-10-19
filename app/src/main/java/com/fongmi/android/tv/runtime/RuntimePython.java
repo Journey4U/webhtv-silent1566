@@ -101,6 +101,44 @@ public final class RuntimePython {
     }
 
     /**
+     * Whether the Python runtime can be started at all on this build.
+     *
+     * <p>Two sources satisfy this: an installed module, or the runtime still bundled in the host APK.
+     * The bundled case is detected by looking for the build manifest Chaquopy itself reads, because
+     * that file's presence is exactly what {@code Platform}'s constructor requires.
+     *
+     * <p>Callers use this before constructing anything that triggers {@code Python.start}, so a build
+     * without the runtime reports the feature as unavailable instead of failing to initialise. This
+     * matters because the eager path is reached from static initialisers: {@code BaseLoader} creates
+     * its {@code PyLoader} while the class is being initialised, so an exception there would take down
+     * configuration loading rather than just the Python feature.
+     */
+    public static boolean isRuntimeAvailable(Context context) {
+        if (context == null) return false;
+        try {
+            if (isModuleInstalled(RuntimeAndroid.packageInfo())) return true;
+        } catch (Throwable e) {
+            // fall through to the bundled probe
+        }
+        return isBundled(context);
+    }
+
+    /**
+     * Whether the host APK still carries the runtime's own payload.
+     *
+     * <p>Probes the same file Chaquopy's {@code Platform} opens, so the answer cannot disagree with
+     * what the runtime will find.
+     */
+    public static boolean isBundled(Context context) {
+        if (context == null) return false;
+        try (java.io.InputStream in = context.getAssets().open("chaquopy/build.json")) {
+            return in != null;
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
+    /**
      * Installs the provider Chaquopy reads its payload through.
      *
      * <p>Call before anything touches {@code com.chaquo.python}: {@code Platform}'s constructor

@@ -2863,7 +2863,94 @@ Python 的 8 个库与 `assets/chaquopy/**` **全部是构建产物**（`git ls-
 
 **累计真机验证**：runtime 包 82 项（本阶段为纯 JVM 单测，不增加真机项）。
 
-### 16.42 后续阶段
+### 16.42 S26 已交付（2026-10-19）：Python 第 3 步——惰性化 + 可用性门禁
+
+**范围**：S13 门禁六步计划的**第 3 步**——消除 Python 的急切初始化，
+使模块缺失时应用能正常启动而非崩溃。S12 已证明不改会崩。
+
+#### 16.42.1 要修的问题（S12 已定位）
+
+```text
+BaseLoader.Loader.INSTANCE（静态初始化）
+  -> new BaseLoader()
+  -> new PyLoader()
+  -> new Loader()          ← 触发 Python.start(...)
+```
+
+`Loader` 的构造器调用 `Python.start(Platform.create())`，而 `Platform` 的构造器会读
+`chaquopy/build.json` 并加载 8 个库。模块缺失时这条链**在类初始化期间抛异常**，
+后果不是「Python 功能不可用」而是**配置加载整体失败**——所有源类型都受影响。
+
+`PythonSubtitleScriptRuntime` 有同一形状（构造器 `this(new Loader())`）。
+
+#### 16.42.2 实施
+
+| 文件 | 改动 |
+| --- | --- |
+| `RuntimePython.java` | 新增 `isRuntimeAvailable(Context)` 与 `isBundled(Context)` |
+| `PyLoader.java` | `loader` 改 `volatile` + 双检锁惰性创建；新增 `isAvailable()` |
+| `PythonSubtitleScriptRuntime.java` | 同上；保留包内构造器供测试注入替身 |
+
+**可用性探测的设计**：`isBundled` 探测的正是 Chaquopy 自己要打开的
+`chaquopy/build.json`——**答案不可能与运行时的实际判断不一致**。
+`isRuntimeAvailable` 先查模块（查平台而非注册表），再查内嵌副本。
+
+**惰性化的形状**：
+
+```java
+private Loader loader() {
+    Loader current = loader;
+    if (current != null) return current;
+    synchronized (this) {
+        current = loader;
+        if (current == null) {
+            if (!isAvailable()) throw new IllegalStateException("Python 模块未安装");
+            current = new Loader();
+            loader = current;
+        }
+        return current;
+    }
+}
+```
+
+失败被限制在**真正需要 Python 的那一次调用**内，而不是扩散到类初始化。
+
+#### 16.42.3 验证
+
+新增 `PythonRuntimeLazyInitTest`（**8 项**），分**行为**与**结构**两半：
+
+| 用例 | 断言 |
+| --- | --- |
+| `constructingTheSourceLoaderDoesNotStartPython` | 纯 JVM 下构造不抛异常（改动前会失败） |
+| `constructingTheSubtitleRuntimeDoesNotStartPython` | 同上 |
+| `availabilityProbesReportAbsenceWithoutThrowing` | 无运行时时报不可用而非抛异常 |
+| `runtimeAvailabilityTreatsANullContextAsUnavailable` | null context 安全 |
+| `noConstructorCreatesTheBridgeEagerly` | **结构**：构造器内不得有 `new Loader()` |
+| `theBridgeIsCreatedOnlyBehindAnAvailabilityCheck` | **结构**：创建点必须在可用性检查之后 |
+| `availabilityProbeIsSafeWithoutAPlatform` | 探测自身不可抛（它在静态初始化链上） |
+| `availabilityRuleCoversBothSources` | 可用性规则 |
+
+**为什么还要结构断言**：行为测试对**任何**在测试时恰好避开该调用的实现都会通过，
+而不变量在于**调用所在的位置**。结构检查沿用 `PyLoaderDiagnosticsWiringTest`
+已有的同一做法（读同一文件、同样先剥离注释行）。
+
+**验证断言有牙齿**（决定性检查）：用 `git show HEAD:<file>` 取改动前源码，
+跑同一套结构断言逻辑：
+
+| 文件 | 改动前 | 改动后 |
+| --- | --- | --- |
+| `PyLoader.java` | 构造器含 `new Loader()` = **True** | **False** |
+| `PythonSubtitleScriptRuntime.java` | **True** | **False** |
+
+即这两条断言在改动前**确实会失败**——不是恒真检查。
+
+**单测**：runtime + loader + subtitle 共 **287 项全绿**；
+全仓库 **5271 项中 7 项失败**，与改动前**完全相同的既有失败集合**
+（总数 +8 即本阶段新增），无回归。
+
+**累计真机验证**：runtime 包 82 项（本阶段为纯 JVM 单测，不增加真机项）。
+
+### 16.43 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -2907,6 +2994,7 @@ Python 的 8 个库与 `assets/chaquopy/**` **全部是构建产物**（`git ls-
 | **S23** | DV5 构建期排除 + 双向验证（82 项） | ✅ 已交付 |
 | **S24** | Python 第 1 步：契约层支持 assets 载荷校验 | ✅ 已交付 |
 | **S25** | Python 第 2 步：Platform 从模块读资产 + 拓扑序加载 | ✅ 已交付 |
+| **S26** | Python 第 3 步：惰性化 + 可用性门禁 | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
