@@ -1477,7 +1477,54 @@ MPV 与 IJK —— 用户选中只会得到 `resolveManualPlayer` 的失败提�
 **累计真机验证**：59 项
 （模块 10 / mpv 9 / mpv 加载 3 / mpv 功能 3 / mpv 播放 3 / ijk 6 / 仓库 4 / sherpa 加载 3 / 零模块 10 / 其他 8）。
 
-### 16.23 后续阶段
+### 16.23 S7 已交付（2026-10-19）：预加载去重实验，划定模块化边界
+
+**范围**：验证「按绝对路径预加载能否满足后续裸名查找」——这决定协议提取器
+（thunder / jianpian / forcetech，共 15.5 MB）能否模块化。
+
+**为什么必须先做这个实验**：这些库由**第三方 AAR 的二进制代码**加载
+（`XLLoader` 调 `System.loadLibrary("xl_thunder_sdk")`），不像 IJK 那样是仓库内源码、
+可以注入 resolver。宿主唯一可用的手段是「按绝对路径预加载模块副本，
+指望后续裸名请求复用已加载的那一份」。
+
+**结论：不行。**
+
+`System.loadLibrary("ijkffmpeg")` 抛 `UnsatisfiedLinkError`，
+**即使该库已通过绝对路径加载、且已在 `/proc/self/maps` 中可见**。
+
+原因：Android 在进入 `dlopen` **之前**，先由 class loader 的
+`nativeLibraryDirectories` 把裸名解析成路径。模块目录不在其中，所以名字根本解析不到——
+失败发生在**名字解析**阶段，与库是否已映射无关。
+
+**对照实验（让结论可归因）**：
+
+| 测试 | 结果 | 意义 |
+| --- | --- | --- |
+| `bareNameLookupSucceedsForALibraryInTheHostDirectory` | ✅ | 宿主目录内的库（`libc++_shared.so`）裸名加载正常，机制本身没坏 |
+| `preloadedLibraryDoesNotSatisfyALaterBareNameLookup` | ✅ | 模块库预加载后裸名查找仍失败，失败归因于**位置** |
+| `moduleLibraryLoadsWhenTheHostControlsTheCall` | ✅ | 宿主自己控制调用时能加载模块库，这正是 `RuntimeIjk` 的做法 |
+
+没有第一个对照，第二个结论可能被误读成「裸名机制坏了」。
+
+**对架构的影响**：
+
+- **可以模块化**：宿主自己控制加载的库（mpv、sherpa、ijk）。IJK 之所以可行，
+  是因为它的 loader 是仓库内源码，能注入 resolver。
+- **不能模块化（不改厂商代码）**：thunder（`XLLoader`）、jianpian（`P2PClass`）、
+  forcetech（`ForceTV`）——它们是二进制 AAR。
+
+因此 **15.5 MB 的协议提取器库必须留在 APK**。这是架构边界，不是待办事项。
+
+**理论替代路径（未实施，不推荐）**：用自定义 `ClassLoader`（其
+`nativeLibraryDirectories` 指向模块目录）加载这三个 AAR 的类。这属于 DexClassLoader
+路线——第一轮设计已否决（97 处静态引用、接口泄漏），此处还要额外承担厂商类的
+类加载器隔离风险。
+
+**验证**：真机 **OK (3 tests)**。
+
+**累计真机验证**：62 项。
+
+### 16.24 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -1502,6 +1549,7 @@ MPV 与 IJK —— 用户选中只会得到 `resolveManualPlayer` 的失败提�
 | **S5** | 零模块状态验证（新用户初始状态） | ✅ 已交付 |
 | **S6** | 内核选择器按可用性过滤 + 修复对比度缺陷 | ✅ 已交付 |
 | **S6-b** | 内核过滤的真机验证 | ✅ 已交付 |
+| **S7** | 预加载去重实验（划定模块化边界） | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
