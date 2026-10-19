@@ -1652,7 +1652,47 @@ S9 已证明 `addAssetPath` 可用）与原生库加载（`loadNativeLibs()`，�
 
 **累计真机验证**：64 项。
 
-### 16.27 后续阶段
+### 16.27 S11 已交付（2026-10-19）：模块资产读取机制对比，实施可避开隐藏 API
+
+**范围**：确定宿主读取模块资产的**实施用**机制。S9 证明了 `AssetManager.addAssetPath`
+可行，但它是**隐藏 API**，且会**不可逆地**改动进程级 `AssetManager`。
+本阶段比较三种机制，为 S11（Python 模块化实施）选定设计。
+
+**结论：实施走公开 API，不需要隐藏 API。**
+
+**实验（`RuntimeModuleAssetAccessDeviceTest`，真机 OK (5 tests)）**：
+
+| 机制 | 性质 | 结果 |
+| --- | --- | --- |
+| `AssetManager.addAssetPath` | 隐藏 API，进程级不可逆 | ✅（S9 已证） |
+| `createPackageContext(pkg).getAssets()` | **公开 API**，无进程级副作用 | ✅ **可用** |
+| 直接按 zip 读模块 APK | **纯 Java**，不涉 Android API | ✅ **可用** |
+
+关键用例：
+
+| 用例 | 意义 |
+| --- | --- |
+| `moduleAssetsAreReadableThroughCreatePackageContext` | 公开 API 可读模块资产 |
+| `moduleAssetsAreReadableByReadingTheApkDirectly` | 纯 Java 回退路径可用 |
+| `bothMechanismsAgreeOnTheContent` | 两条路径字节一致，排除「读到别的东西」 |
+| `moduleContextDoesNotExposeHostAssets` | 模块 context **不**暴露宿主资产，证明读的确实是模块的 |
+| `missingModulePackageIsReported` | 模块缺失时抛 `NameNotFoundException`，不静默回退到宿主资产 |
+
+**设计取舍**：
+
+- **首选 `createPackageContext`**：公开 API、无需反射、无进程级副作用，
+  且天然带包存在性检查（`NameNotFoundException`）。
+- **备选直接读 APK zip**：完全不依赖 Android API，可用于契约层纯 JVM 单测，
+  也规避未来 API 收紧。
+- **不再使用 `addAssetPath`**：隐藏 API 在 targetSdk 提升后可能被限制，
+  且其进程级不可逆副作用已在 S9 中造成测试顺序陷阱。
+
+**对 S11 的意义**：Python 模块化的两个技术前提至此**全部落实且都走公开路径**——
+资产读取（本阶段）与无 SONAME 依赖解析（S10）。预计收益约 21 MB。
+
+**累计真机验证**：69 项。
+
+### 16.28 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -1681,6 +1721,7 @@ S9 已证明 `addAssetPath` 可用）与原生库加载（`loadNativeLibs()`，�
 | **S8** | 体积口径修正（debug 专用资产） | ✅ 已交付 |
 | **S9** | 资产重定向实验（Python 模块化可行性） | ✅ 已交付 |
 | **S10** | 无 SONAME 依赖实验（Python 模块化可行性） | ✅ 已交付 |
+| **S11** | 模块资产读取机制对比（选定公开 API） | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
