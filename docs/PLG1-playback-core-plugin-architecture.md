@@ -1692,7 +1692,66 @@ S9 已证明 `addAssetPath` 可用）与原生库加载（`loadNativeLibs()`，�
 
 **累计真机验证**：69 项。
 
-### 16.28 后续阶段
+### 16.28 S12 已交付（2026-10-19）：Python 加载次序实验，契约必须拓扑排序
+
+**范围**：确定 Python 模块的 `loadOrder` 契约。`chaquo/Platform.java` 用**裸名**按固定次序加载：
+
+```text
+crypto_chaquopy, ssl_chaquopy, sqlite3_chaquopy, python3.10, chaquopy_java
+```
+
+但实测依赖图与该次序**不一致**：
+
+| 依赖方 | 被依赖方 | 次序问题 |
+| --- | --- | --- |
+| `libcrypto_chaquopy.so` | `libcrypto_python.so` | 依赖方**先**加载 |
+| `libssl_chaquopy.so` | `libssl_python.so` | 依赖方**先**加载 |
+| `libsqlite3_chaquopy.so` | `libsqlite3_python.so` | 依赖方**先**加载 |
+| `libssl_python.so` | `libcrypto_python.so` | 依赖方**先**加载 |
+| `libchaquopy_java.so` | `libpython3.10.so` | 次序正确 |
+
+**结论：现有裸名次序在绝对路径加载下不成立，模块契约必须声明拓扑排序的 `loadOrder`。**
+
+**决定性证据（`RuntimePythonLoadOrderDeviceTest`，真机 OK (2 tests)）**：
+
+| 用例 | 结果 |
+| --- | --- |
+| `dependencyIsNotSatisfiedFromTheModuleDirectoryWhenLoadedLate` | ✅ 依赖**未**从模块目录满足 |
+| `preloadingTheDependencyMakesTheDependentLoadable` | ✅ 预加载后正常 |
+
+第一项的**设备日志**给出了精确机制（这是本阶段最有价值的证据）：
+
+```text
+late-load libcrypto_chaquopy.so = loaded;
+  libcrypto_python.so origins = [/data/app/com.silent.android.webhtv-.../lib/arm64];
+  hostDir                     = /data/app/com.silent.android.webhtv-.../lib/arm64
+```
+
+即：**加载成功了，但依赖是从「宿主自己的目录」解析的**，不是暂存目录。
+现有次序之所以能工作，纯粹因为宿主 `nativeLibraryDir` 在 linker 搜索路径上——
+而真实模块里宿主**根本不提供**这些库，故该次序会失败。
+
+**为什么断言的是「映射来源」而不是「是否成功」**：宿主自己带这 8 个库的全部副本，
+且宿主目录**在**搜索路径上。所以「不预加载依赖也能成功」是可能的——
+但那是**假成功**：它依赖宿主副本，而模块场景下不存在。断言映射来源才是可迁移的性质。
+
+**对契约的影响**：Python 模块的 `runtime.json` 必须给出拓扑排序的 `loadOrder`：
+
+```text
+libcrypto_python.so, libpython3.10.so, libsqlite3_python.so, libssl_python.so,
+libcrypto_chaquopy.so, libssl_chaquopy.so, libsqlite3_chaquopy.so, libchaquopy_java.so
+```
+
+这与 mpv 模块的做法一致（S1 的 9 库 `loadOrder` 同样是拓扑序，而非宿主 `LOAD_ORDER` 原序）。
+
+**另一项关键约束（已核实，影响降级设计）**：`BaseLoader` 构造时**急切**创建
+`PyLoader` → `new Loader()` → `Python.start(...)`（`BaseLoader.java:35`）。
+因此 Python 模块缺失时，**配置加载会直接抛异常**，而不是优雅降级。
+实施时必须把这条路径改为「模块可用才初始化」，否则未装模块的用户无法加载任何配置。
+
+**累计真机验证**：71 项。
+
+### 16.29 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -1722,6 +1781,7 @@ S9 已证明 `addAssetPath` 可用）与原生库加载（`loadNativeLibs()`，�
 | **S9** | 资产重定向实验（Python 模块化可行性） | ✅ 已交付 |
 | **S10** | 无 SONAME 依赖实验（Python 模块化可行性） | ✅ 已交付 |
 | **S11** | 模块资产读取机制对比（选定公开 API） | ✅ 已交付 |
+| **S12** | Python 加载次序实验（契约须拓扑排序） | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
