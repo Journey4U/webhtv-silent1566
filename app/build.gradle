@@ -204,6 +204,29 @@ androidComponents {
             output.outputFileName.set("${mode}-${abi}${apkSuffix}.apk")
         }
     }
+
+    // Drop the forcetech P2P engine asset from arm64 builds only.
+    //
+    // The forcetech AAR ships two different libraries under one name. The 54 KB
+    // jni/armeabi-v7a/libmitv.so is a loader: it reads <cacheDir>/libmitv.so, which the vendor
+    // service com.gsoft.mitv.MainActivity.checkLibrary() has just copied out of assets, and then
+    // calls System.load on it. The 3.7 MB assets/libmitv.so is the engine that loader loads
+    // (soname libforcetv.so, exporting Java_com_forcetech_android_ForceTV_start/stop).
+    //
+    // The arm64 flavor's abiFilters removes the loader, so nothing in that build can reach the
+    // engine: the extractor's three bare-name lookups (p2p, p3p, mitv) all fail and the asset is
+    // never mapped. Dropping it there loses no capability. The v7a build keeps both files, because
+    // there the loader is present and the asset is what it loads.
+    //
+    // Scoped through the variant API because ignoreAssetsPatterns is not a ProductFlavor property:
+    // writing androidResources { } inside a productFlavors block falls through to the android-level
+    // block and applies to every variant, which would silently break v7a.
+    onVariants(selector().all()) { variant ->
+        def abi = variant.productFlavors.find { it.first == 'abi' }?.second
+        if (abi == 'arm64_v8a') {
+            variant.androidResources.ignoreAssetsPatterns.add('libmitv.so')
+        }
+    }
 }
 
 dependencies {

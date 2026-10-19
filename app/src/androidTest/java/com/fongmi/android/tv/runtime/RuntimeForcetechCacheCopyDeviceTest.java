@@ -28,22 +28,53 @@ import java.nio.file.Paths;
  * {@code System.loadLibrary("mitv")} is called. This test reproduces that sequence exactly and
  * observes what the linker does with it.
  *
- * <p>The two steps do not connect. {@code System.loadLibrary} resolves a bare name through the class
- * loader's native library directories — the app's {@code nativeLibraryDir} and the system paths — and
- * the cache directory is not among them. This is the same mechanism measured earlier for a module's
- * directory: a library outside those directories is invisible to a bare-name lookup however it got
- * there. So the 3.7 MB asset is copied on every service start and then never loaded.
+ * <p>Those two steps do not connect. {@code System.loadLibrary} resolves a bare name through the
+ * class loader's native library directories — the app's {@code nativeLibraryDir} and the system
+ * paths — and the cache directory is not among them. So the copy is not what the bare-name lookup
+ * loads. In an arm64 build the lookup fails outright, because the flavor's {@code abiFilters}
+ * removes every forcetech library; in a v7a build it succeeds from
+ * {@code lib/armeabi-v7a/libmitv.so} instead.
  *
- * <p>An earlier measurement adds a second, independent reason it cannot be used in an arm64 build:
- * the asset is 32-bit ARM while the process is 64-bit. This test covers the mechanism that applies
- * regardless of ABI, which is what makes the asset removable in both builds rather than only in
- * arm64.
+ * <p><b>Correction to an earlier reading of this evidence.</b> The measurement above was first taken
+ * to mean the asset is dead weight in both builds. That was wrong, and the mistake was stopping at
+ * the bare-name lookup. The two files that share the name {@code libmitv.so} are different
+ * libraries: the 54 KB {@code jni/armeabi-v7a/libmitv.so} is a <em>loader</em> that reads
+ * {@code <cacheDir>/libmitv.so} and calls {@code System.load} on it, while the 3.7 MB asset is the
+ * engine it loads (soname {@code libforcetv.so}, exporting
+ * {@code Java_com_forcetech_android_ForceTV_start/stop} — the very natives
+ * {@code com.forcetech.android.ForceTV} declares). So in a v7a build the asset is live: the loader
+ * is present and the asset is what it loads. Only arm64 can drop it, because there the loader is
+ * filtered out by ABI and nothing can reach the engine.
+ *
+ * <p>An independent arm64-specific reason the asset cannot be used there: it is 32-bit ARM while the
+ * process is 64-bit.
+ *
+ * <p>These measurements are skipped where the asset is no longer packaged, which is now the case for
+ * arm64. They are kept because they are the evidence for the arm64 removal, and can be re-run against
+ * a v7a build or a build made with the exclusion disabled.
  */
 @RunWith(AndroidJUnit4.class)
 public class RuntimeForcetechCacheCopyDeviceTest {
 
     private static final String ASSET_LIBRARY = "libmitv.so";
     private static final String BARE_NAME = "mitv";
+
+    /**
+     * Whether the asset is present in this build.
+     *
+     * <p>The arm64 variant no longer packages it, so the measurements below can only be taken where
+     * it still exists. They are skipped rather than deleted because they remain the evidence for why
+     * the asset was removable from arm64, and they can be re-run against a v7a build or a build made
+     * with the exclusion disabled.
+     */
+    private static boolean assetIsPackaged() {
+        try (InputStream in = com.fongmi.android.tv.App.get().getAssets()
+                .open(ASSET_LIBRARY, AssetManager.ACCESS_STREAMING)) {
+            return in != null;
+        } catch (IOException e) {
+            return false;
+        }
+    }
 
     private static byte[] readAsset() throws IOException {
         try (InputStream in = com.fongmi.android.tv.App.get().getAssets()
@@ -93,6 +124,10 @@ public class RuntimeForcetechCacheCopyDeviceTest {
      */
     @Test
     public void cacheCopyIsNotLoadedByTheBareNameLookup() throws Exception {
+        assumeTrue("the arm64 build no longer packages " + ASSET_LIBRARY + "; run this against a "
+                        + "build that does to re-observe the measurement",
+                assetIsPackaged());
+
         File cacheCopy = copyAssetToCache();
         assertTrue("the reproduction should have written the cache copy", cacheCopy.isFile());
 
@@ -122,6 +157,9 @@ public class RuntimeForcetechCacheCopyDeviceTest {
      */
     @Test
     public void assetArchitectureIsRecorded() throws Exception {
+        assumeTrue("the arm64 build no longer packages " + ASSET_LIBRARY,
+                assetIsPackaged());
+
         byte[] data = readAsset();
         int elfClass = data[4] & 0xff;
         int machine = (data[0x12] & 0xff) | ((data[0x13] & 0xff) << 8);

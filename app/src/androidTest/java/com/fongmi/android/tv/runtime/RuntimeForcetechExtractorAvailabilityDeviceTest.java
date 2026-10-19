@@ -24,8 +24,7 @@ import java.io.File;
  * through a bare-name lookup: {@code Force} binds {@code P2PService}, whose {@code onBind} passes the
  * scheme through to {@code com.forcetech.android.ForceTV.start(String lib, int port)}, which calls
  * {@code System.loadLibrary(lib)}. With no {@code libp2p.so}, {@code libp3p.so} or {@code libmitv.so}
- * anywhere in the arm64 APK, that lookup cannot succeed — and the asset copy does not help, because
- * the cache directory is not on the linker's search path and the asset is 32-bit besides.
+ * anywhere in the arm64 APK, that lookup cannot succeed.
  *
  * <p>Two consequences follow, and they are different in kind:
  *
@@ -35,8 +34,13 @@ import java.io.File;
  *       the asset: a {@code p2p://} or {@code mitv://} source would fail rather than being offered.
  * </ul>
  *
- * <p>The test asserts only the first, because that is what the removal depends on. The second is
- * recorded as an observation, not acted on here.
+ * <p><b>Scope of the removal.</b> This is an arm64-only conclusion. The 54 KB
+ * {@code jni/armeabi-v7a/libmitv.so} is a loader that reads {@code <cacheDir>/libmitv.so} and calls
+ * {@code System.load} on it, and the 3.7 MB asset is the engine it loads, so a v7a build needs both
+ * files. Only arm64, where the loader is filtered out by ABI, can drop the asset.
+ *
+ * <p>The test asserts only the first consequence, because that is what the removal depends on. The
+ * second is recorded as an observation, not acted on here.
  */
 @RunWith(AndroidJUnit4.class)
 public class RuntimeForcetechExtractorAvailabilityDeviceTest {
@@ -108,12 +112,20 @@ public class RuntimeForcetechExtractorAvailabilityDeviceTest {
     }
 
     /**
-     * The asset is still packaged, so its removal is a real change rather than a no-op.
+     * The asset is gone from this build, which is what the exclusion is for.
      *
-     * <p>Without this, the tests above could pass simply because the asset was already gone.
+     * <p>This assertion was the inverse before the exclusion landed: it checked the asset was still
+     * packaged, so that the findings above could not pass merely because the asset had already been
+     * removed. Now that the removal is the change under test, the assertion is flipped. It is kept
+     * rather than deleted because it is what distinguishes "the asset is absent because we removed
+     * it" from "the asset is absent for some other reason".
+     *
+     * <p>Only the arm64 variant is covered here, and that is deliberate: the v7a build must keep the
+     * asset, because there the 54 KB {@code jni/armeabi-v7a/libmitv.so} loader is present and this
+     * asset is what it loads.
      */
     @Test
-    public void theAssetIsStillPackaged() throws Exception {
+    public void theAssetIsExcludedFromTheArm64Build() {
         boolean exists;
         try (java.io.InputStream in = App.get().getAssets()
                 .open("libmitv.so", android.content.res.AssetManager.ACCESS_STREAMING)) {
@@ -121,6 +133,6 @@ public class RuntimeForcetechExtractorAvailabilityDeviceTest {
         } catch (java.io.IOException e) {
             exists = false;
         }
-        assertTrue("the asset should still be packaged, otherwise there is nothing to remove", exists);
+        assertTrue("the arm64 build should no longer package the forcetech engine asset", !exists);
     }
 }

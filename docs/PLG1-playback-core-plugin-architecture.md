@@ -2215,7 +2215,11 @@ if (!dv5Bundle) {
 
 **累计真机验证**：74 项（本阶段为构建期实测，不增加真机项）。
 
-### 16.33 S17 已交付（2026-10-19）：forcetech 资产为死重量，3.7 MB 可移除
+### 16.33 S17 已交付（2026-10-19）：forcetech 资产在 arm64 上不可加载
+
+> **⚠ 本阶段结论已在 S20 修正。** S17 测得的事实成立（arm64 上该资产从不被加载），
+> 但**推理不完整**：S17 只测到「裸名加载桩库」这一步，没有继续追查桩库之后的行为，
+> 因而误判「v7a 也不需要该资产」。实际 v7a **需要**它。详见 §16.36。
 
 **范围**：重新审查 S7 划定的「协议提取器不可模块化」边界时，发现其中一项与模块化无关的
 **独立问题**——`assets/libmitv.so`（3.7 MB）在 arm64 构建里**根本无法加载**。
@@ -2260,10 +2264,11 @@ asset=libmitv.so size=3745900 elfClass=1 machine=0x28 process64=true
 | 构建 | `lib/` 中的 mitv | `assets/libmitv.so` | 结论 |
 | --- | --- | --- | --- |
 | **arm64** | **无** | 3.7 MB（32 位） | 无法加载 |
-| **v7a** | `lib/armeabi-v7a/libmitv.so`（54,548 B，32 位） | 3.7 MB（32 位） | `loadLibrary` 命中 **jni 版本**，assets 版本仍无用 |
+| **v7a** | `lib/armeabi-v7a/libmitv.so`（54,548 B，32 位） | 3.7 MB（32 位） | `loadLibrary` 命中 **jni 版本**；**但 assets 版本并非无用——见 §16.36** |
 
-两个 `libmitv.so` **哈希不同**（`e0fed3b5…` 54 KB vs `db429e31…` 3.7 MB）：
-jni 版本才是被加载的那个，assets 版本只是每次 Service 启动都白拷一次。
+两个 `libmitv.so` **哈希不同**（`e0fed3b5…` 54 KB vs `db429e31…` 3.7 MB）。
+S17 当时据此推断「jni 版本才是被加载的那个，assets 版本只是白拷一次」——
+**这个推断是错的**：两者是**不同用途的库**（桩库 vs 引擎），详见 §16.36。
 
 **收益**：3.7 MB——大于候选清单里的 quickjs（1.3 MB）与 tflite（3.5 MB），
 且**不需要模块化**（无需模块体系、无 `hostLibraries`、无降级设计）。
@@ -2271,9 +2276,8 @@ jni 版本才是被加载的那个，assets 版本只是每次 Service 启动都
 **与 S7 的关系**：S7 回答「这些库能否移出 APK 由模块提供」（否）；
 本阶段回答「这个资产是否被使用」（否）。两者不冲突，且后者收益可直接落地。
 
-**建议**：移除 `assets/libmitv.so`。因涉及裁剪第三方 AAR 内容，属兼容性变更，
-需 §7 设计门禁与用户批准后实施；实施时应按 ABI 条件化（仅 arm64 构建排除，
-v7a 保持现状——v7a 的 assets 版本虽也无用，但未逐一实测，不冒险）。
+**建议（S20 修正后）**：**仅从 arm64 构建**排除 `assets/libmitv.so`。
+v7a **必须保留**——S17 当时认为「v7a 也无用」是错的。
 
 **累计真机验证**：77 项。
 
@@ -2406,13 +2410,109 @@ bareNameLookups p2p=UnsatisfiedLinkError p3p=UnsatisfiedLinkError mitv=Unsatisfi
 是同一类问题（注册与可用性脱节），但**不在本任务范围内**，按 `AGENTS.md` §2 只报告。
 
 **对移除方案的影响**：移除 `assets/libmitv.so` 在 arm64 上**零能力损失**
-（它从未被加载，且其消费方也已失效）。v7a 构建的 assets 版本虽同样未被加载
-（S17 已证：`loadLibrary` 只查 `nativeLibraryDir`，而 v7a 的 `jni` 版本才是被命中的那个），
-但未逐一实测 v7a 的其他路径，故实施时**仅对 arm64 排除**，v7a 保持现状。
+（它从未被加载，且其消费方也已失效）。实施时**仅对 arm64 排除**，v7a 保持现状。
+
+> **⚠ 本阶段末句的推理已在 S20 修正。** S19 写「v7a 的 assets 版本虽同样未被加载」——
+> 这句是**错的**，它沿用了 S17 的不完整推理。实际 v7a **需要**该资产（桩库会加载它）。
+> 详见 §16.36。
 
 **累计真机验证**：80 项。
 
-### 16.36 后续阶段
+### 16.36 S20 已交付（2026-10-19）：arm64 排除落地，并修正 S17/S19 的错误结论
+
+**范围**：实施 forcetech 资产移除（仅 arm64），并在实施过程中发现并修正
+S17/S19 的**实质性推理错误**。
+
+#### 16.36.1 修正的错误
+
+S17 测得的事实**成立**（arm64 上该资产从不被裸名加载），但**推理不完整**：
+
+S17 只追到「`System.loadLibrary("mitv")` 加载 jni 版本的桩库」这一步就停了，
+据此推断「assets 版本只是白拷一次，v7a 也不需要它」。
+**没有继续追查桩库之后的行为**。
+
+S20 用符号表与反汇编补上了这一步，两个同名文件其实是**不同用途的库**：
+
+| 文件 | 体积 | 性质 | 导出符号 |
+| --- | --- | --- | --- |
+| `jni/armeabi-v7a/libmitv.so` | 54,548 | **加载器桩** | `Java_com_gsoft_mitv_MainActivity_loadLibrary`、`decrypt`、`encrypt` |
+| `assets/libmitv.so` | 3,745,900 | **真正的引擎** | `Java_com_forcetech_android_ForceTV_start/stop`（SONAME `libforcetv.so`） |
+
+桩库的字符串与符号给出了完整链条：
+
+```text
+% s/libmitv.so          "Failed to open libmitv.so"
+res/raw/libmitv.so       "Failed to extract libmitv.so"
+com.gsoft.mitv.zip
+getCacheDir / getPackageCodePath / System.load / unzip / zdecompress / aes_decrypt
+```
+
+即桩库会读 `<cacheDir>/libmitv.so`（正是 `checkLibrary()` 从 assets 拷来的那份）
+并 `System.load` 它。而 `com.forcetech.android.ForceTV` 声明的 native 方法
+（`start(int,int)`/`stop()`）**恰好由那个 3.7 MB 引擎导出**。
+
+**因此**：
+
+| 构建 | 桩库在否 | 引擎资产用途 | 可否移除 |
+| --- | --- | --- | --- |
+| **arm64** | **否**（被 `abiFilters` 过滤） | 无人能加载它 | ✅ 可移除 |
+| **v7a** | **是** | **桩库加载的目标** | ❌ **必须保留** |
+
+S17 的「v7a 也无用」是错的。所幸 S17 的建议本身就写了「仅 arm64 排除，v7a 不冒险」，
+所以**错误结论没有导致错误实施**。
+
+#### 16.36.2 实施与验证
+
+**实现**：`app/build.gradle` 的 `androidComponents` 中按 ABI 条件化排除。
+
+**过程中发现的第二个陷阱（重要）**：最初把 `androidResources { }` 写在
+`productFlavors.arm64_v8a` 块里，结果**全局生效**（v7a 也丢了资产）。
+原因：AGP 9.2.1 中 `ignoreAssetsPatterns` 只声明在
+`com.android.build.api.dsl.AndroidResources`（`android` 块级）与
+`com.android.build.api.variant.AndroidResources`（**Variant API**）上，
+**不在 `ProductFlavor` 上**。写在 flavor 块里时 Groovy 闭包回退到外层 `android` 块。
+
+已改用 Variant API：
+
+```groovy
+onVariants(selector().all()) { variant ->
+    def abi = variant.productFlavors.find { it.first == 'abi' }?.second
+    if (abi == 'arm64_v8a') {
+        variant.androidResources.ignoreAssetsPatterns.add('libmitv.so')
+    }
+}
+```
+
+**验证（全量重打两个 ABI）**：
+
+| 构建 | 体积 | `assets/libmitv.so` | `lib/…/libmitv.so` |
+| --- | --- | --- | --- |
+| **arm64** | 113.4 → **109.9 MiB** | **已排除** ✅ | 本来就无 |
+| **v7a** | **97.9 MiB**（= 原始基线） | **保留** ✅ | **保留** ✅ |
+
+**真机验证（arm64，9 项全绿）**：
+
+| 测试类 | 结果 |
+| --- | --- |
+| `RuntimeForcetechAbiDeviceTest` | OK (3 tests) |
+| `RuntimeForcetechCacheCopyDeviceTest` | OK (3 tests) |
+| `RuntimeForcetechExtractorAvailabilityDeviceTest` | OK (3 tests) |
+
+**过时断言的处置**：三个测试类中依赖「资产存在」的断言已按新事实修正——
+改为在该前提不成立时 `assumeTrue` 跳过（而非删除），
+因为它们仍是 arm64 可移除性的证据，且可对 v7a 构建重跑。
+其中 `theAssetIsStillPackaged` **反转**为 `theAssetIsExcludedFromTheArm64Build`，
+以便区分「资产因我们的移除而不在」与「资产因其他原因不在」。
+
+**收益**：arm64 **-3.57 MiB**（113.4 → 109.9 MiB）；v7a 无变化。
+
+**教训（值得记录）**：追查「某文件是否被使用」时，只测到**第一层加载**就下结论是危险的。
+`loadLibrary("mitv")` 成功加载的是一个**加载器**，而加载器加载的东西才是真正在用的。
+判据应该是「这个文件的**内容**是否被消费」，而不是「这个文件名是否出现在某次加载调用里」。
+
+**累计真机验证**：89 项。
+
+### 16.37 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -2450,6 +2550,7 @@ bareNameLookups p2p=UnsatisfiedLinkError p3p=UnsatisfiedLinkError mitv=Unsatisfi
 | **S17** | forcetech 资产死重量取证（3.7 MB 可移除） | ✅ 已交付 |
 | **S18** | 剩余候选量化与优先级排序（评估） | ✅ 已交付 |
 | **S19** | forcetech 在 arm64 整体失效取证（含既有缺陷） | ✅ 已交付 |
+| **S20** | arm64 排除落地 + 修正 S17/S19 错误结论 | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。

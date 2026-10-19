@@ -4,6 +4,8 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
+import android.content.res.AssetManager;
+
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 
 import org.junit.Test;
@@ -49,12 +51,28 @@ public class RuntimeForcetechAbiDeviceTest {
     /** The asset as packaged in the APK, read through the host's asset manager. */
     private static byte[] readAsset() throws IOException {
         try (InputStream in = com.fongmi.android.tv.App.get().getAssets()
-                .open(ASSET_LIBRARY, android.content.res.AssetManager.ACCESS_STREAMING)) {
+                .open(ASSET_LIBRARY, AssetManager.ACCESS_STREAMING)) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             byte[] buffer = new byte[8192];
             int len;
             while ((len = in.read(buffer)) != -1) out.write(buffer, 0, len);
             return out.toByteArray();
+        }
+    }
+
+    /**
+     * Whether the asset is present in this build.
+     *
+     * <p>The arm64 variant no longer packages it, so the measurement below can only be taken where it
+     * still exists. It is skipped rather than deleted because it is the evidence for the arm64
+     * removal, and can be re-run against a v7a build or one made with the exclusion disabled.
+     */
+    private static boolean assetIsPackaged() {
+        try (InputStream in = com.fongmi.android.tv.App.get().getAssets()
+                .open(ASSET_LIBRARY, AssetManager.ACCESS_STREAMING)) {
+            return in != null;
+        } catch (IOException e) {
+            return false;
         }
     }
 
@@ -100,6 +118,9 @@ public class RuntimeForcetechAbiDeviceTest {
     public void packagedForcetechAssetIsIncompatibleWithA64BitProcess() throws Exception {
         assumeTrue("this build is 32-bit, so the asset may be live and the finding does not apply",
                 processIs64Bit());
+        assumeTrue("the arm64 build no longer packages " + ASSET_LIBRARY + "; run this against a "
+                        + "build that does to re-observe the measurement",
+                assetIsPackaged());
 
         byte[] data = readAsset();
         String described = describeElf(data);
