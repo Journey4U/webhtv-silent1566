@@ -30,12 +30,24 @@ public final class RuntimeIntegrity {
 
     public static String sha256(File file) throws IOException {
         if (file == null || !file.isFile()) throw new IOException("Not a readable file: " + file);
-        MessageDigest digest = digest();
         try (InputStream in = new FileInputStream(file)) {
-            byte[] buffer = new byte[65536];
-            int read;
-            while ((read = in.read(buffer)) != -1) digest.update(buffer, 0, read);
+            return sha256(in);
         }
+    }
+
+    /**
+     * Digests a stream, for payloads that are not files on disk.
+     *
+     * <p>A module's assets live inside its APK, so they are read through an {@code AssetManager} or a
+     * zip entry rather than a {@code File}. The stream is consumed but not closed, because the caller
+     * owns it.
+     */
+    public static String sha256(InputStream in) throws IOException {
+        if (in == null) throw new IOException("Not a readable stream");
+        MessageDigest digest = digest();
+        byte[] buffer = new byte[65536];
+        int read;
+        while ((read = in.read(buffer)) != -1) digest.update(buffer, 0, read);
         return toHex(digest.digest());
     }
 

@@ -144,6 +144,24 @@ public final class RuntimeManifest {
     }
 
     /**
+     * Whether a manifest path names a native library rather than some other payload.
+     *
+     * <p>Native libraries are the only payload the host loads from
+     * {@code nativeLibraryDir}; everything else (the Python runtime's {@code assets/chaquopy/**} tree,
+     * for instance) lives inside the module APK and is read through a different mechanism. The
+     * distinction decides which verifier runs, so it is stated once here rather than inferred at each
+     * call site.
+     *
+     * <p>A bare file name counts as a native library: some producers omit the {@code lib/<abi>/}
+     * prefix, and {@link #nativeLibraryEntry} accepts those.
+     */
+    public static boolean isNativeLibraryPath(String declaredPath) {
+        if (RuntimeText.isBlank(declaredPath)) return false;
+        String normalized = declaredPath.trim();
+        return normalized.startsWith("lib/") || !normalized.contains("/");
+    }
+
+    /**
      * Resolves a manifest path against an installed module's {@code nativeLibraryDir}.
      *
      * <p>Manifest paths are written relative to the APK root ({@code lib/<abi>/x.so}), while

@@ -23,6 +23,22 @@ public final class RuntimeVerifier {
         File resolve(String name);
     }
 
+    /**
+     * Opens a declared payload that is not a native library.
+     *
+     * <p>A module's native libraries are files under {@code nativeLibraryDir}, so they can be checked
+     * with {@link File}. Other payloads — the Python runtime's {@code assets/chaquopy/**} tree, for
+     * instance — live inside the module APK and are reachable only through an {@code AssetManager} or
+     * a zip reader. This seam lets the verification logic stay free of Android APIs and unit-testable
+     * on a plain JVM.
+     *
+     * <p>Implementations must return {@code null} when the path does not exist, so a missing payload
+     * is reported as a verification problem rather than as an exception.
+     */
+    public interface PayloadReader {
+        java.io.InputStream open(String path) throws IOException;
+    }
+
     private RuntimeVerifier() {
     }
 
@@ -32,6 +48,22 @@ public final class RuntimeVerifier {
             File moduleRoot,
             String expectedAbi,
             HostLibraries hostLibraries) {
+        return verify(module, manifest, moduleRoot, expectedAbi, hostLibraries, null);
+    }
+
+    /**
+     * Verifies a module that may declare payloads beyond its native libraries.
+     *
+     * @param payloads opens non-library payloads (e.g. {@code assets/**}); when {@code null}, a
+     *     manifest declaring such a payload is rejected rather than accepted unverified
+     */
+    public static Result verify(
+            RuntimeCatalog.RuntimeModule module,
+            RuntimeManifest manifest,
+            File moduleRoot,
+            String expectedAbi,
+            HostLibraries hostLibraries,
+            PayloadReader payloads) {
 
         if (module == null) return Result.failure("catalog entry is missing");
         if (manifest == null) return Result.failure("module manifest is missing");
@@ -51,7 +83,7 @@ public final class RuntimeVerifier {
 
         List<String> problems = new ArrayList<>();
         verifyHostLibraries(manifest, hostLibraries, problems);
-        verifyFiles(manifest, moduleRoot, problems);
+        verifyFiles(manifest, moduleRoot, payloads, problems);
         if (!problems.isEmpty()) return Result.failure(problems);
 
         return Result.success(manifest.library);
@@ -81,6 +113,21 @@ public final class RuntimeVerifier {
             File moduleRoot,
             String expectedAbi,
             HostLibraries hostLibraries) {
+        return verifyInstalled(manifest, moduleRoot, expectedAbi, hostLibraries, null);
+    }
+
+    /**
+     * Verifies an installed module that may declare payloads beyond its native libraries.
+     *
+     * @param payloads opens non-library payloads (e.g. {@code assets/**}); when {@code null}, a
+     *     manifest declaring such a payload is rejected rather than accepted unverified
+     */
+    public static Result verifyInstalled(
+            RuntimeManifest manifest,
+            File moduleRoot,
+            String expectedAbi,
+            HostLibraries hostLibraries,
+            PayloadReader payloads) {
 
         if (manifest == null) return Result.failure("module manifest is missing");
         if (!manifest.isValid()) return Result.failure("module manifest is invalid");
@@ -99,7 +146,7 @@ public final class RuntimeVerifier {
 
         List<String> problems = new ArrayList<>();
         verifyHostLibraries(manifest, hostLibraries, problems);
-        verifyFiles(manifest, moduleRoot, problems);
+        verifyFiles(manifest, moduleRoot, payloads, problems);
         if (!problems.isEmpty()) return Result.failure(problems);
 
         return Result.success(manifest.library);
@@ -177,28 +224,71 @@ public final class RuntimeVerifier {
         return false;
     }
 
-    private static void verifyFiles(RuntimeManifest manifest, File moduleRoot, List<String> problems) {
+    private static void verifyFiles(
+            RuntimeManifest manifest, File moduleRoot, PayloadReader payloads, List<String> problems) {
         for (RuntimeManifest.RuntimeFile file : manifest.files()) {
-            // moduleRoot is the installed module's nativeLibraryDir, which already ends at
-            // lib/<abi>/, so the manifest's own lib/<abi>/ prefix must be stripped first.
-            String entry = RuntimeManifest.nativeLibraryEntry(file.path, manifest.abi);
-            File target = new File(moduleRoot, entry);
-            if (!target.isFile()) {
-                problems.add("declared file is missing: " + file.path);
-                continue;
+            if (RuntimeManifest.isNativeLibraryPath(file.path)) {
+                verifyNativeLibrary(file, manifest, moduleRoot, problems);
+            } else {
+                verifyPayload(file, payloads, problems);
             }
-            if (file.size > 0 && target.length() != file.size) {
-                problems.add("declared file size mismatch: " + file.path);
-                continue;
+        }
+    }
+
+    /**
+     * Checks a declared native library against the module's {@code nativeLibraryDir}.
+     *
+     * <p>{@code moduleRoot} is the installed module's {@code nativeLibraryDir}, which already ends at
+     * {@code lib/<abi>/}, so the manifest's own {@code lib/<abi>/} prefix must be stripped first.
+     */
+    private static void verifyNativeLibrary(
+            RuntimeManifest.RuntimeFile file, RuntimeManifest manifest, File moduleRoot,
+            List<String> problems) {
+        String entry = RuntimeManifest.nativeLibraryEntry(file.path, manifest.abi);
+        File target = new File(moduleRoot, entry);
+        if (!target.isFile()) {
+            problems.add("declared file is missing: " + file.path);
+            return;
+        }
+        if (file.size > 0 && target.length() != file.size) {
+            problems.add("declared file size mismatch: " + file.path);
+            return;
+        }
+        try {
+            String actual = RuntimeIntegrity.sha256(target);
+            if (!RuntimeIntegrity.matches(file.sha256, actual)) {
+                problems.add("declared file digest mismatch: " + file.path);
             }
-            try {
-                String actual = RuntimeIntegrity.sha256(target);
-                if (!RuntimeIntegrity.matches(file.sha256, actual)) {
-                    problems.add("declared file digest mismatch: " + file.path);
-                }
-            } catch (IOException e) {
-                problems.add("declared file is unreadable: " + file.path);
+        } catch (IOException e) {
+            problems.add("declared file is unreadable: " + file.path);
+        }
+    }
+
+    /**
+     * Checks a declared payload that is not a native library, such as {@code assets/chaquopy/**}.
+     *
+     * <p>Such payloads live inside the module APK, so they are read through the injected
+     * {@link PayloadReader} rather than from the file system. A manifest that declares one while no
+     * reader is available is rejected: accepting it unverified would let an unread payload reach the
+     * loader, which is the opposite of what this class is for.
+     */
+    private static void verifyPayload(
+            RuntimeManifest.RuntimeFile file, PayloadReader payloads, List<String> problems) {
+        if (payloads == null) {
+            problems.add("declared payload cannot be verified without a reader: " + file.path);
+            return;
+        }
+        try (java.io.InputStream in = payloads.open(file.path)) {
+            if (in == null) {
+                problems.add("declared payload is missing: " + file.path);
+                return;
             }
+            String actual = RuntimeIntegrity.sha256(in);
+            if (!RuntimeIntegrity.matches(file.sha256, actual)) {
+                problems.add("declared payload digest mismatch: " + file.path);
+            }
+        } catch (IOException e) {
+            problems.add("declared payload is unreadable: " + file.path);
         }
     }
 

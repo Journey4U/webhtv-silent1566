@@ -2724,7 +2724,58 @@ private static final String[] MODULE_PACKAGES = {
 
 **累计真机验证**：runtime 包 **82 项**（78 + 4 新增）。
 
-### 16.40 后续阶段
+### 16.40 S24 已交付（2026-10-19）：Python 第 1 步——契约层支持 assets 载荷校验
+
+**范围**：S13 门禁六步计划的**第 1 步**——让契约层能校验「非原生库」载荷。
+这是 Python 模块化的前置条件：Chaquopy 的主体是 `assets/chaquopy/**` 树，
+而现有 `verifyFiles` 以 `nativeLibraryDir` 为根，**覆盖不到 `assets/**`**。
+
+#### 16.40.1 实施
+
+| 文件 | 改动 |
+| --- | --- |
+| `RuntimeIntegrity.java` | 新增 `sha256(InputStream)`——载荷在 APK 内，不能整份读入内存 |
+| `RuntimeManifest.java` | 新增 `isNativeLibraryPath(path)`：按载荷根分类 |
+| `RuntimeVerifier.java` | 新增 `PayloadReader` 缝；`verifyFiles` 按前缀分派到库校验/载荷校验 |
+| `RuntimeCompatibility.java` | 白名单加 `chaquopy-python310-v1`；包名表加 `python` |
+
+**`PayloadReader` 缝的设计**：载荷在模块 APK 内，只能经 `AssetManager` 或 zip 读取。
+把它做成注入接口，使校验逻辑保持**无 Android API 依赖**，可在纯 JVM 单测。
+这与既有的 `HostLibraries`、`ManifestSource` 是同一模式。
+
+**关键安全决定（失败关闭）**：清单声明了载荷但**没有可用 reader** 时，
+**拒绝**而非接受。接受等于让未校验的载荷进入加载器——与「失败关闭」的目的相反。
+这也意味着「不能读模块资产的宿主构建」无法被诱导加载载荷。
+
+**向后兼容**：新增 `verify`/`verifyInstalled` 的重载（多一个 `payloads` 参数），
+原有签名保留并委托给新重载。既有的 `lib/**` 型模块**无需 reader**。
+
+#### 16.40.2 验证
+
+新增 `RuntimePayloadVerificationTest`（**10 项**）：
+
+| 用例 | 断言 |
+| --- | --- |
+| `acceptsAModuleWhosePayloadMatches` | 载荷摘要匹配则通过 |
+| `rejectsAPayloadWhoseDigestDoesNotMatch` | **摘要不符则拒绝** |
+| `rejectsAMissingPayload` | 载荷缺失则拒绝 |
+| `rejectsAPayloadWhenNoReaderIsAvailable` | **无 reader 时拒绝而非接受** |
+| `reportsAReaderFailureAsAProblem` | reader 抛异常→报告为问题而非传播 |
+| `acceptsALibraryOnlyModuleWithoutAReader` | 向后兼容：纯库模块无需 reader |
+| `classifiesPathsByPayloadRoot` | 路径分类正确 |
+| `rejectsAPayloadPathWithTraversal` | 路径穿越被拒 |
+| `rejectsAnAbsolutePayloadPath` | 绝对路径被拒 |
+| `streamDigestMatchesFileDigest` | 流式摘要与文件摘要一致 |
+
+**单测**：runtime 包 **176 项全绿**（含新增 10 项）。
+
+**过程中的顺序依赖（已修正）**：首轮 5 项失败，原因是
+`chaquopy-python310-v1` **尚未加入契约白名单**——校验在载荷检查之前先做契约检查，
+所以白名单必须先加。这印证了 S13 门禁把「契约层扩展」列为第 1 步的必要性。
+
+**累计真机验证**：runtime 包 82 项（本阶段为纯 JVM 单测，不增加真机项）。
+
+### 16.41 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -2766,6 +2817,7 @@ private static final String[] MODULE_PACKAGES = {
 | **S21** | 全包回归（78 项）+ 修正测试隔离缺陷 | ✅ 已交付 |
 | **S22** | DV5 宿主侧接入 + 发现 CI 构建缺口 | ✅ 已交付 |
 | **S23** | DV5 构建期排除 + 双向验证（82 项） | ✅ 已交付 |
+| **S24** | Python 第 1 步：契约层支持 assets 载荷校验 | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。

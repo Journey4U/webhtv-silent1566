@@ -27,7 +27,13 @@ public final class RuntimeCompatibility {
             // The DV5 GPU renderer module. Verified with readelf that its library depends only on
             // system libraries (libandroid/liblog/libmediandk/libvulkan/libdl/libm/libc) and carries
             // a soname, so like IJK it needs no host-library digest.
-            "exo-dv5-renderer-v1"
+            "exo-dv5-renderer-v1",
+            // The Python runtime (Chaquopy). Its payload is not only native libraries: the
+            // interpreter's stdlib, requirements and bootstrap live in assets/chaquopy/**, which the
+            // host reads through the module's own context. Verified with readelf that the eight
+            // libraries depend only on system libraries and each other, so there is no host-library
+            // digest to keep in sync.
+            "chaquopy-python310-v1"
     )));
 
     /**
@@ -42,7 +48,8 @@ public final class RuntimeCompatibility {
             "sherpa", "com.silent.runtime.sherpa",
             "mpv", "com.silent.runtime.mpv",
             "ijk", "com.silent.runtime.ijk",
-            "dv5", "com.silent.runtime.dv5"
+            "dv5", "com.silent.runtime.dv5",
+            "python", "com.silent.runtime.python"
     );
 
     private RuntimeCompatibility() {
