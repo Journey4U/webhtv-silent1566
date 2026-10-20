@@ -3182,7 +3182,97 @@ S28PY spider built=com.fongmi.chaquo.Spider
 
 **累计真机验证**：runtime 包 **91 项**（88 + 3 新增）。
 
-### 16.46 后续阶段
+### 16.46 S29 已交付（2026-10-20）：修复插件仓库 CI 缺口与构建不可复现
+
+**范围**：让插件仓库的 CI 能真正产出 `python` 模块，并让模块摘要**跨机器可复现**。
+本次不做真机验证（产物内容与行为未变，只是构建链路变得确定）。
+
+#### 16.46.1 CI 缺口（三个）
+
+| 缺口 | 现象 | 修复 |
+| --- | --- | --- |
+| **Chaquopy 中间产物** | `python` 模块的 8 库 + 载荷来自 `chaquo/build/intermediates/`，CI 只 `git clone` 拿不到 | 新增 Gradle 步骤，只跑 `merge*DebugAssets` + `copy*DebugJniLibsProjectOnly` |
+| **Python 版本** | Chaquopy 要求 3.10，CI 用 3.12 | `setup-python` 改 3.10 |
+| **NDK** | `dv5` 由脚本自建 CMake，需要 NDK；CI 未装 | 从检出读 `ndkVersion` 并 `sdkmanager --install` |
+
+Gradle 任务只跑最小集（不 assemble），因为 assemble 还需签名且慢得多。
+
+#### 16.46.2 构建不可复现（三个根因，逐个实测）
+
+用**干净检出 vs 本地**构建对比发现摘要不同，逐层定位到三个独立原因：
+
+**根因 1：依赖未锁版本**
+
+`requirements.txt` 只写包名。实测干净检出装到 `cachetools 7.2.4` / `certifi 2026.10.18`，
+本地是 `7.2.2` / `2026.7.22`。
+
+修复：锁定**完整依赖闭包**（14 项 = 8 直接 + 6 传递）。
+只锁直接依赖会把问题下移一层。
+
+**根因 2：`.pyc` 头部嵌入源文件 mtime**
+
+Chaquopy 调 `python -m compileall` 且**从不传 `--invalidation-mode`**，
+因此是 timestamp 模式，每个 `.pyc` 头部记录源文件 mtime。
+`git clone` 的 mtime 是克隆时刻 → CI 每次不同。实测 **349 个 `.pyc` 全部不同**。
+
+`SOURCE_DATE_EPOCH` 能强制 compileall 切到 hash 模式（实测 flags 0→3、两次摘要一致），
+但它同时**打断 pip 安装**，不可用。
+
+修复：在打包侧归一化 `.imy`——重排条目、固定时间戳、清零 `.pyc` 头部的 mtime/size。
+
+**归一化为何安全（已实测）**：载荷里只有 `.pyc`、没有 `.py`，而 Chaquopy 用
+`SourcelessAssetLoader`（`importer.py:710`）加载。用真实 `SourcelessFileLoader`
+把 mtime/size 改成任意值后代码仍能正常加载。
+
+**根因 3：`frozenset` 常量顺序随 hash seed 变**
+
+归一化头部后仍有 14 个 `.pyc` 不同，差异是 `:read-only`/`:empty` 等**元素排列顺序**——
+CPython 的 peephole 优化把 `x in {...}` 折叠成 `frozenset` 常量，其顺序由 hash seed 决定。
+
+修复：构建时设 `PYTHONHASHSEED=0`（实测同目录 3 次编译摘要完全一致）。
+环境变量从 Gradle 传到其派生的任务，所以只在 CI 步骤里 `export` 即可——Chaquopy 无对应选项。
+
+**连带修复：`build.json` 必须同步**
+
+`.imy` 归一化后字节变了，而 `build.json` 仍记录**归一化前**的 digest，
+导致 `build.json`、`MANIFEST.MF`、`.SF`、`.RSA` 链式不同。
+
+修复：`collect_payload` 改成**两遍**——先归一化 `.imy` 并算出新 digest，再回写 `build.json`。
+`build.json` 只被 Chaquopy 用于判断「已解压资产是否最新」，用新 digest 回写后仍自洽。
+
+#### 16.46.3 发现的真实 CI bug（Windows 掩盖）
+
+中间目录名是 `copyArm64_v8aDebugJniLibsProjectOnly` / `mergeArm64_v8aDebugAssets`
+（**首字母大写**），而我的脚本生成的是小写 `copyarm64_v8a…`。
+**Windows 路径不敏感所以本地一直通过，Linux CI 会直接失败**。
+
+修复：抽出 `gradle_variant(abi)` 同时给出两种拼写（`arm64_v8a` 目录名 / `Arm64_v8a` 任务名前缀），
+避免在多处重复这个规律。
+
+#### 16.46.4 决定性验证
+
+| 验证 | 结果 |
+| --- | --- |
+| 干净检出 vs 本地 · arm64 | **摘要相同** `824947fb82c89a52…` |
+| 干净检出 vs 本地 · v7a | **摘要相同** `0e7286e87989e06c…` |
+| python 模块结构 | 8 库**全 Stored**、28 文件（库 8 + 载荷 20）、loadOrder 8 项拓扑序 |
+| catalog vs dist | python/ijk/mpv/dv5 **全部 match**；sherpa 的差异是既有分支差异 |
+
+**干净检出**指 `git archive HEAD` 导出 + 覆盖未提交改动，无 `build/`、无 `local.properties`，
+完全等价于 CI 的 `git clone`。
+
+#### 16.46.5 教训
+
+**「本地能跑」不等于「CI 能跑」。** 本次三个缺口里有两个（Python 版本、路径大小写）
+在 Windows 本地完全不可见。修 CI 必须用**等价于 CI 的干净环境**验证，
+而不是在自己机器上反复重跑。
+
+**可复现性要逐层剥离**：依赖版本 → 文件头部 → 常量顺序 → 派生清单，
+每修一层才会暴露下一层。只修第一层就宣布「已可复现」会得到错误结论。
+
+**累计真机验证**：runtime 包 91 项（本阶段无真机项）。
+
+### 16.47 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -3230,6 +3320,7 @@ S28PY spider built=com.fongmi.chaquo.Spider
 | **S27a** | 修复 PayloadReader 接线缺口 | ✅ 已交付 |
 | **S27b** | Python 构建期排除 + 端到端验证（88 项） | ✅ 已交付 |
 | **S28** | 真正启动 Python（91 项）+ 修复 onStart context | ✅ 已交付 |
+| **S29** | 修复插件仓库 CI 缺口 + 构建可复现 | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。

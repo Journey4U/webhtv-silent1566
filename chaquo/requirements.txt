@@ -1,8 +1,31 @@
-lxml
-ujson
-pyquery
-requests
-certifi
-cachetools
-pycryptodome
-beautifulsoup4
+# Python dependencies embedded into the runtime module.
+#
+# Every entry is pinned, including transitive ones. Chaquopy's payload is packaged into the module
+# APK and the catalog pins a SHA-256 for that APK, so the dependency set has to be reproducible: an
+# unpinned requirement lets pip resolve a newer release on each build, which changes the payload and
+# therefore the digest. Measured before pinning: a clean checkout produced cachetools 7.2.4 and
+# certifi 2026.10.18 while a local build produced 7.2.2 and 2026.7.22, and the two module APKs
+# differed in digest despite identical sources.
+#
+# The transitive entries are listed because pinning only the direct ones would leave them floating,
+# which is the same problem one level down. Update them together, by re-resolving the whole set.
+#
+# Chaquopy supplies its own libcxx/libxml2/libxslt wheels; they are not listed here.
+
+# Direct dependencies.
+lxml==5.3.0
+ujson==5.11.0
+pyquery==2.1.0
+requests==2.34.2
+certifi==2026.10.18
+cachetools==7.2.4
+pycryptodome==3.21.0
+beautifulsoup4==4.15.0
+
+# Transitive dependencies, pinned so the resolved set cannot drift.
+charset_normalizer==3.5.2
+cssselect==1.5.0
+idna==3.20
+soupsieve==2.10
+typing_extensions==4.16.0
+urllib3==2.8.0
