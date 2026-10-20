@@ -82,17 +82,29 @@ public class Platform extends Python.Platform {
     private final JSONObject buildJson;
     private final AssetManager am;
     private final Context context;
+    /**
+     * The context Chaquopy reads its assets through.
+     *
+     * <p>That is the host's own context when the runtime is bundled, and the module-wrapping context
+     * when it comes from a module. It is what {@link #onStart} hands to
+     * {@code java.android.initialize}, whose Python side builds an {@code AssetFinder} over
+     * {@code context.getAssets()} while using {@code context.getFilesDir()} as the extraction root —
+     * so the wrapper must serve assets from the module while inheriting the host's writable files
+     * directory.
+     */
+    private final Context assetContext;
     private String ABI;
 
     public Platform() {
         this.context = Init.context();
         this.sp = context.getSharedPreferences(Common.ASSET_DIR, Context.MODE_PRIVATE);
-        // Assets may come from the module rather than from this APK. The extraction target and the
-        // preferences file stay on the host: the host owns its own files directory, and the module's
-        // data directory is not writable by us.
+        // Assets may come from the module rather than from this APK. The extraction target, the
+        // preferences file and every filesDir/cacheDir use below stay on the host, because the
+        // module's data directory is not writable by us; only asset reads are redirected.
         RuntimeModule module = runtimeModule;
         Context assetSource = module == null ? null : module.assetContext();
-        this.am = (assetSource == null ? context : assetSource).getAssets();
+        this.assetContext = assetSource == null ? context : assetSource;
+        this.am = assetContext.getAssets();
         try {
             try (InputStream is = am.open(Common.ASSET_DIR + "/" + Common.ASSET_BUILD_JSON)) {
                 buildJson = new JSONObject(streamToString(is));
@@ -138,7 +150,12 @@ public class Platform extends Python.Platform {
     @Override
     public void onStart(@NotNull Python py) {
         String[] appPath = {Common.ASSET_APP, Common.ASSET_REQUIREMENTS, Common.ASSET_STDLIB + "-" + ABI};
-        py.getModule("java.android").callAttr("initialize", context, buildJson, appPath);
+        // The asset-serving context, not the bare host one. Chaquopy's Python side opens
+        // chaquopy/*.imy through this context's AssetManager while using its getFilesDir() as the
+        // extraction root; passing the host context made every asset lookup miss once the runtime
+        // moved into a module, which surfaced as
+        // FileNotFoundError: .../files/chaquopy/AssetFinder/app during Python.start.
+        py.getModule("java.android").callAttr("initialize", assetContext, buildJson, appPath);
     }
 
     private void deleteObsolete(File baseDir, String[] filenames) {

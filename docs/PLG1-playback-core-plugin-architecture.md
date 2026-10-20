@@ -3096,7 +3096,93 @@ verify ok=false problem=declared payload is unreadable: assets/chaquopy/app.imy;
 
 **累计真机验证**：runtime 包 **88 项**（82 + 6 新增）。
 
-### 16.45 后续阶段
+### 16.45 S28 已交付（2026-10-19）：真正启动 Python——发现并修复 onStart 的 context 错误
+
+**范围**：补上此前**没有做的验证**。S27b 我称之为「端到端验证」，但核查后发现：
+**没有任何测试真正启动过 Python**。既有测试只验证了各部件（清单校验、库齐全、
+载荷可读），若 Chaquopy 根本无法从模块启动，它们**全都不会失败**。
+
+#### 16.45.1 发现方式
+
+被用户问「是否都在模拟器上实测过」后逐项核查，发现缺口并补上测试。
+**首次运行即 3 项全失败**——证明这个缺口是真实的，不是形式主义。
+
+#### 16.45.2 真实 bug（首个失败的原因）
+
+```text
+com.chaquo.python.PyException: FileNotFoundError:
+  /data/data/com.silent.android.webhtv/files/chaquopy/AssetFinder/app
+    at <python>.java.android.importer.initialize_importlib(importer.py:80)
+    at <python>.java.android.initialize(__init__.py:25)
+    at com.fongmi.chaquo.Platform.onStart(Platform.java:141)
+    at com.chaquo.python.Python.start(Python.java:54)
+    at com.fongmi.chaquo.Loader.<init>(Loader.java:23)
+```
+
+**根因**：`Platform.onStart` 传给 Python 的是**宿主 context**：
+
+```java
+py.getModule("java.android").callAttr("initialize", context, buildJson, appPath);
+//                                                       ↑ Init.context()，宿主
+```
+
+而 Chaquopy 的 Python 侧用这个 context 的 `getAssets()` 打开 `chaquopy/*.imy`。
+宿主已不再带 `chaquopy/`（我上一步排除了），所以每次查找都 miss。
+
+**根因的根因**：S25 我只改了 `this.am`（Java 侧提取代码用的 AssetManager），
+**没改传给 Python 的 context**。两处是**不同的消费路径**，我只覆盖了一处。
+
+#### 16.45.3 修复
+
+`Platform` 新增 `assetContext` 字段（模块 wrapper 或宿主），
+`onStart` 改传它：
+
+```java
+py.getModule("java.android").callAttr("initialize", assetContext, buildJson, appPath);
+```
+
+**为什么 wrapper 的语义正好合适**：`initialize` 用同一个 context 做两件事——
+`getAssets()` 读模块资产，`getFilesDir()` 作解压根。我的 `ContextWrapper`
+只覆盖 `getAssets()`、其余委托宿主，**恰好满足**这两个需求。
+
+而 `context`（宿主）仍用于解压根、preferences、旧文件清理——这些**必须**留在宿主，
+因为模块数据目录不可写。
+
+#### 16.45.4 决定性证据（真机）
+
+新增 `RuntimePythonStartDeviceTest`（3 项），**OK (3 tests)**，设备日志：
+
+```text
+S28PY started version=3.10.19 (main, Nov 20 2025, 17:54:06) [Clang 18.0.4 ...]
+S28PY libpython3.10.so origins=[/data/app/com.silent.runtime.python-.../lib/arm64]
+S28PY spider built=com.fongmi.chaquo.Spider
+```
+
+三条证据分别证明：
+
+| 证据 | 证明 |
+| --- | --- |
+| `version=3.10.19` | **真实 CPython 启动了**（不是桩，也不是缓存的假值） |
+| `libpython3.10.so origins=[模块目录]` | 解释器库**从模块映射**，绝对路径加载路径确实生效 |
+| `spider built=com.fongmi.chaquo.Spider` | **bridge 可用**——源码交给 Python 并拿回对象 |
+
+| 场景 | 结果 |
+| --- | --- |
+| 装模块 | `OK (3 tests)`；全包 **OK (91 tests)** |
+| 卸载模块（零模块态） | **OK (91 tests)**，不崩 |
+
+#### 16.45.5 教训
+
+**「端到端」不能只看部件是否齐全。** S27b 的 6 项测试覆盖了清单校验、文件齐全、
+载荷可读、可用性探测——看起来全面，但**没有一项真正启动解释器**，
+所以它们对「Chaquopy 能否从模块启动」这个问题**完全无知**。
+
+真正启动一次，立刻暴露了 `onStart` 的 context 错误。这与 S21/S27a 同一教训：
+**验证必须走真实的执行路径，而不是逐个验证部件**。
+
+**累计真机验证**：runtime 包 **91 项**（88 + 3 新增）。
+
+### 16.46 后续阶段
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -3143,6 +3229,7 @@ verify ok=false problem=declared payload is unreadable: assets/chaquopy/app.imy;
 | **S26** | Python 第 3 步：惰性化 + 可用性门禁 | ✅ 已交付 |
 | **S27a** | 修复 PayloadReader 接线缺口 | ✅ 已交付 |
 | **S27b** | Python 构建期排除 + 端到端验证（88 项） | ✅ 已交付 |
+| **S28** | 真正启动 Python（91 项）+ 修复 onStart context | ✅ 已交付 |
 | S1–S5 | P1 mpv / P4 ijk / P3 python / P6 tflite / P7 lut / P8 quickjs | 待做 |
 
 > 每阶段独立 `task_guard.sh` 会话 + 原子提交 + recovery tag。
